@@ -20,7 +20,7 @@
 
 ## 灵动岛
 
-整个灵动岛的视觉设计参考
+整个灵动岛的视觉设计参考[Ebullioscopic/Atoll](https://github.com/Ebullioscopic/Atoll)。
 
 1. 一个灵动岛，平时处于收敛显示状态，用户鼠标移动到岛上后展开详细状态。
 
