@@ -108,20 +108,20 @@ private struct CardSettingsView: View {
             Section("启用与排序") {
                 List {
                     ForEach(registry.enabledCards) { card in
-                        HStack {
-                            Label(card.name, systemImage: card.systemImage)
-                            Spacer()
-                            Toggle("启用", isOn: enabledBinding(card.id)).labelsHidden()
-                        }
+                        CardSettingsRow(
+                            name: card.name,
+                            systemImage: card.systemImage,
+                            isEnabled: enabledBinding(card.id)
+                        )
                     }
                     .onMove(perform: registry.moveEnabled)
 
                     ForEach(registry.registrations.filter { !registry.enabledIDs.contains($0.id) }) { card in
-                        HStack {
-                            Label(card.name, systemImage: card.systemImage)
-                            Spacer()
-                            Toggle("启用", isOn: enabledBinding(card.id)).labelsHidden()
-                        }
+                        CardSettingsRow(
+                            name: card.name,
+                            systemImage: card.systemImage,
+                            isEnabled: enabledBinding(card.id)
+                        )
                     }
                 }
                 .frame(minHeight: 220)
@@ -143,6 +143,25 @@ private struct CardSettingsView: View {
             } catch {
                 errorMessage = "至少需要启用一张功能卡。"
             }
+        }
+    }
+}
+
+private struct CardSettingsRow: View {
+    let name: String
+    let systemImage: String
+    @Binding var isEnabled: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .frame(width: 18, alignment: .center)
+                .accessibilityHidden(true)
+            Text(name)
+            Spacer()
+            Toggle("启用", isOn: $isEnabled)
+                .labelsHidden()
+                .accessibilityLabel("\(name) 启用")
         }
     }
 }

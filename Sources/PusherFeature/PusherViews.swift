@@ -179,38 +179,41 @@ private struct PusherExpandedView: View {
             setPopoverPresented(newValue != nil)
         }
         .popover(item: $popover, arrowEdge: .bottom) { item in
-            switch item {
-            case .create:
-                PusherEditor(
-                    title: "新增任务",
-                    task: nil,
-                    setEditingText: setEditingText,
-                    save: { title, urgency, repeats in
-                        if await store.create(title: title, urgency: urgency, repeatsDaily: repeats) {
-                            popover = nil
+            Group {
+                switch item {
+                case .create:
+                    PusherEditor(
+                        title: "新增任务",
+                        task: nil,
+                        setEditingText: setEditingText,
+                        save: { title, urgency, repeats in
+                            if await store.create(title: title, urgency: urgency, repeatsDaily: repeats) {
+                                popover = nil
+                            }
                         }
-                    }
-                )
-            case let .edit(task):
-                PusherEditor(
-                    title: "编辑任务",
-                    task: task,
-                    setEditingText: setEditingText,
-                    save: { title, urgency, repeats in
-                        if await store.update(
-                            taskID: task.id,
-                            title: title,
-                            urgency: urgency,
-                            repeatsDaily: repeats
-                        ) { popover = nil }
-                    },
-                    delete: {
-                        if await store.delete(taskID: task.id) { popover = nil }
-                    }
-                )
-            case .calendar:
-                PusherCalendarView(store: store)
+                    )
+                case let .edit(task):
+                    PusherEditor(
+                        title: "编辑任务",
+                        task: task,
+                        setEditingText: setEditingText,
+                        save: { title, urgency, repeats in
+                            if await store.update(
+                                taskID: task.id,
+                                title: title,
+                                urgency: urgency,
+                                repeatsDaily: repeats
+                            ) { popover = nil }
+                        },
+                        delete: {
+                            if await store.delete(taskID: task.id) { popover = nil }
+                        }
+                    )
+                case .calendar:
+                    PusherCalendarView(store: store)
+                }
             }
+            .pusherPopoverAppearance()
         }
     }
 }
@@ -230,27 +233,28 @@ private struct PusherColumn: View {
                 Spacer()
                 Text("\(tasks.count)").foregroundStyle(.secondary).monospacedDigit()
             }
-            ScrollView {
-                LazyVStack(spacing: 7) {
-                    ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
-                        PusherTaskCard(task: task, edit: { edit(task) })
-                            .draggable(task.id.uuidString) {
-                                PusherTaskCard(task: task, edit: {})
-                                    .frame(width: 180)
-                                    .onAppear { setDragging(true) }
-                                    .onDisappear { setDragging(false) }
-                            }
-                            .dropDestination(for: String.self) { values, _ in
-                                guard let raw = values.first, let id = UUID(uuidString: raw) else { return false }
-                                Task { _ = await store.move(taskID: id, to: status, at: index) }
-                                setDragging(false)
-                                return true
-                            }
-                    }
-                    if tasks.isEmpty {
-                        Text("拖到这里")
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, minHeight: 70)
+            if tasks.isEmpty {
+                Text("拖到这里")
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 7) {
+                        ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
+                            PusherTaskCard(task: task, edit: { edit(task) })
+                                .draggable(task.id.uuidString) {
+                                    PusherTaskCard(task: task, edit: {})
+                                        .frame(width: 180)
+                                        .onAppear { setDragging(true) }
+                                        .onDisappear { setDragging(false) }
+                                }
+                                .dropDestination(for: String.self) { values, _ in
+                                    guard let raw = values.first, let id = UUID(uuidString: raw) else { return false }
+                                    Task { _ = await store.move(taskID: id, to: status, at: index) }
+                                    setDragging(false)
+                                    return true
+                                }
+                        }
                     }
                 }
             }
@@ -327,8 +331,18 @@ private struct PusherEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title).font(.headline)
-            TextField("任务名称", text: $name)
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(Color.secondary)
+            TextField(
+                "任务名称",
+                text: $name,
+                prompt: Text("任务名称").foregroundStyle(Color.secondary)
+            )
+                .labelsHidden()
+                .textFieldStyle(.roundedBorder)
+                .foregroundStyle(Color.primary)
+                .accessibilityLabel("任务名称")
                 .onAppear { setEditingText(true) }
                 .onDisappear { setEditingText(false) }
             Picker("急迫度", selection: $urgency) {
@@ -336,7 +350,9 @@ private struct PusherEditor: View {
                 Text("推进").tag(PusherUrgency.progress)
                 Text("规划").tag(PusherUrgency.planning)
             }
+            .foregroundStyle(Color.secondary)
             Toggle("每日刷新", isOn: $repeatsDaily)
+                .foregroundStyle(Color.secondary)
             HStack {
                 if delete != nil {
                     Button("删除", role: .destructive) { confirmsDelete = true }
@@ -380,6 +396,23 @@ private struct PusherCalendarView: View {
         }
         .padding(18)
         .frame(width: 320, height: 260)
+        .foregroundStyle(Color.primary)
+    }
+}
+
+private struct PusherPopoverAppearance: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .preferredColorScheme(.light)
+            .environment(\.colorScheme, .light)
+            .foregroundStyle(Color.primary)
+            .tint(.accentColor)
+    }
+}
+
+private extension View {
+    func pusherPopoverAppearance() -> some View {
+        modifier(PusherPopoverAppearance())
     }
 }
 
