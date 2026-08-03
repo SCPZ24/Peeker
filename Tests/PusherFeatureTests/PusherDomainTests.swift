@@ -31,6 +31,89 @@ final class PusherDomainTests: XCTestCase {
         XCTAssertEqual(board.summary, PusherSummary(planned: 1, processing: 1, done: 0))
     }
 
+    func testCompactSummaryBreaksDownUrgencyOnlyInsideProcessing() throws {
+        let day = makeDay()
+        let tasks = [
+            try PusherTask(title: "Planned urgent", urgency: .urgent, status: .planned, businessDayID: day.id),
+            try PusherTask(title: "Processing urgent", urgency: .urgent, status: .processing, businessDayID: day.id),
+            try PusherTask(title: "Processing progress", urgency: .progress, status: .processing, businessDayID: day.id),
+            try PusherTask(title: "Processing planning", urgency: .planning, status: .processing, businessDayID: day.id),
+            try PusherTask(title: "Done planning", urgency: .planning, status: .done, businessDayID: day.id),
+        ]
+        let board = PusherBoard(businessDay: day, tasks: tasks)
+
+        XCTAssertEqual(
+            board.compactSummary,
+            PusherCompactSummary(
+                planned: 1,
+                processing: 3,
+                done: 1,
+                urgentProcessing: 1,
+                progressProcessing: 1,
+                planningProcessing: 1
+            )
+        )
+    }
+
+    func testCompactSummaryIsAllZeroForAnEmptyBoard() {
+        let board = PusherBoard(businessDay: makeDay(), tasks: [])
+
+        XCTAssertEqual(
+            board.compactSummary,
+            PusherCompactSummary(
+                planned: 0,
+                processing: 0,
+                done: 0,
+                urgentProcessing: 0,
+                progressProcessing: 0,
+                planningProcessing: 0
+            )
+        )
+    }
+
+    func testCompactSummaryUpdatesAfterMovingATaskIntoProcessing() throws {
+        let day = makeDay()
+        let task = try PusherTask(
+            title: "Ship",
+            urgency: .urgent,
+            status: .planned,
+            businessDayID: day.id
+        )
+        var board = PusherBoard(businessDay: day, tasks: [task])
+
+        try board.move(taskID: task.id, to: .processing, at: 0)
+
+        XCTAssertEqual(board.compactSummary.processing, 1)
+        XCTAssertEqual(board.compactSummary.urgentProcessing, 1)
+        XCTAssertEqual(
+            board.compactSummary.urgentProcessing
+                + board.compactSummary.progressProcessing
+                + board.compactSummary.planningProcessing,
+            board.compactSummary.processing
+        )
+    }
+
+    func testCompactSummaryUpdatesAfterInsertionAndDeletion() throws {
+        let day = makeDay()
+        var board = PusherBoard(businessDay: day, tasks: [])
+        let task = try PusherTask(
+            title: "Advance",
+            urgency: .progress,
+            status: .planned,
+            businessDayID: day.id
+        )
+
+        try board.insert(task)
+        XCTAssertEqual(board.compactSummary.planned, 1)
+
+        try board.move(taskID: task.id, to: .processing, at: 0)
+        XCTAssertEqual(board.compactSummary.processing, 1)
+        XCTAssertEqual(board.compactSummary.progressProcessing, 1)
+
+        try board.remove(taskID: task.id)
+        XCTAssertEqual(board.compactSummary, .zero)
+    }
+
     func testSettlementRecreatesDailyTaskAndCarriesOnlyIncompleteOneTimeTasks() throws {
         let oldDay = makeDay()
         let nextDay = BusinessDay(

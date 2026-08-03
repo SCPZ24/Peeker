@@ -33,7 +33,7 @@ public struct FunctionCardMetrics: Equatable, Sendable {
                 leadingWidth: compactLeadingWidth,
                 trailingWidth: compactTrailingWidth,
                 physicalNotchWidth: physicalNotchSize?.width,
-                horizontalPadding: 14
+                horizontalPadding: IslandCompactLayout.horizontalPadding
             ),
             height: max(compactHeight, physicalNotchSize?.height ?? 0)
         )

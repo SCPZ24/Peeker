@@ -1,6 +1,5 @@
 import AppKit
 import Observation
-import QuartzCore
 import SwiftUI
 import FunctionCardKit
 
@@ -13,6 +12,7 @@ public final class IslandPanelController {
     private let screens: ScreenTopologyService
     private var targetScreenID: String?
     private let didFallbackScreen: (String) -> Void
+    private var transitionState = IslandPanelTransitionState()
     nonisolated(unsafe) private var localMonitor: Any?
     nonisolated(unsafe) private var globalMonitor: Any?
     nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
@@ -78,17 +78,17 @@ public final class IslandPanelController {
                 if self.coordinator.presentation.blockers.isPopoverPresented {
                     return event
                 }
-                self.coordinator.escape(pointerIsInside: self.panel.frame.contains(NSEvent.mouseLocation))
+                self.coordinator.escape(pointerIsInside: self.visibleSurfaceFrame.contains(NSEvent.mouseLocation))
                 return nil
             }
-            if event.window !== self.panel, !self.panel.frame.contains(NSEvent.mouseLocation) {
+            if !self.visibleSurfaceFrame.contains(NSEvent.mouseLocation) {
                 self.coordinator.escape(pointerIsInside: false)
             }
             return event
         }
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             Task { @MainActor in
-                guard let self, !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+                guard let self, !self.visibleSurfaceFrame.contains(NSEvent.mouseLocation) else { return }
                 self.coordinator.escape(pointerIsInside: false)
             }
         }
@@ -134,33 +134,105 @@ public final class IslandPanelController {
             auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,
             auxiliaryTopRightWidth: auxiliaryTopRightWidth
         )
-        displayContext.updatePhysicalNotchSize(physicalNotchSize)
-        let requested = coordinator.isExpanded
-            ? CGSize(width: selected.metrics.expandedWidth, height: selected.metrics.expandedHeight)
-            : selected.metrics.compactSize(physicalNotchSize: physicalNotchSize)
-        let frame = IslandPanelGeometry.frame(
-            requestedSize: requested,
+        let compactFrame = IslandPanelGeometry.frame(
+            requestedSize: selected.metrics.compactSize(physicalNotchSize: physicalNotchSize),
             screenFrame: screen.frame,
             safeTopInset: screen.safeAreaInsets.top,
             auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,
             auxiliaryTopRightWidth: auxiliaryTopRightWidth
         )
+        let expandedFrame = IslandPanelGeometry.frame(
+            requestedSize: CGSize(
+                width: selected.metrics.expandedWidth,
+                height: selected.metrics.expandedHeight
+            ),
+            screenFrame: screen.frame,
+            safeTopInset: screen.safeAreaInsets.top,
+            auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,
+            auxiliaryTopRightWidth: auxiliaryTopRightWidth
+        )
+        let targetExpanded = coordinator.isExpanded
+        let targetFrame = targetExpanded ? expandedFrame : compactFrame
+        let generation = transitionState.begin(targetExpanded: targetExpanded)
         let duration = IslandPanelAnimation.duration(
             requested: animated,
-            isExpanded: coordinator.isExpanded,
+            isExpanded: targetExpanded,
             reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
             panelIsVisible: panel.isVisible
         )
         guard let duration else {
-            panel.setFrame(frame, display: true, animate: false)
+            displayContext.updateLayout(
+                physicalNotchSize: physicalNotchSize,
+                compactSurfaceSize: compactFrame.size,
+                expandedSurfaceSize: expandedFrame.size
+            )
+            displayContext.setExpansionTarget(targetExpanded ? 1 : 0)
+            displayContext.updatePresentationSurfaceSize(targetFrame.size)
+            displayContext.setExpandedContentInteractive(targetExpanded)
+            panel.setFrame(targetFrame, display: true, animate: false)
             return
         }
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            panel.animator().setFrame(frame, display: true)
+        let hostFrame = IslandPanelGeometry.transitionHostFrame(
+            compactFrame: compactFrame,
+            expandedFrame: expandedFrame,
+            minimumHostSize: panel.isVisible ? panel.frame.size : .zero
+        )
+        panel.setFrame(hostFrame, display: true, animate: false)
+        hostingController.view.layoutSubtreeIfNeeded()
+        let screenID = ScreenTopologyService.stableID(for: screen)
+
+        Task { @MainActor [weak self] in
+            guard let self,
+                  self.transitionState.acceptsCompletion(
+                      generation: generation,
+                      targetExpanded: targetExpanded
+                  ), self.targetScreenID == screenID
+            else { return }
+            withAnimation(
+                .easeInOut(duration: duration),
+                completionCriteria: .logicallyComplete
+            ) {
+                self.displayContext.updateLayout(
+                    physicalNotchSize: physicalNotchSize,
+                    compactSurfaceSize: compactFrame.size,
+                    expandedSurfaceSize: expandedFrame.size
+                )
+                self.displayContext.setExpansionTarget(targetExpanded ? 1 : 0)
+            } completion: { [weak self] in
+                Task { @MainActor in
+                    self?.finishTransition(
+                        generation: generation,
+                        targetExpanded: targetExpanded,
+                        screenID: screenID,
+                        targetFrame: targetFrame
+                    )
+                }
+            }
         }
+    }
+
+    private func finishTransition(
+        generation: UInt64,
+        targetExpanded: Bool,
+        screenID: String,
+        targetFrame: CGRect
+    ) {
+        guard transitionState.acceptsCompletion(
+            generation: generation,
+            targetExpanded: targetExpanded
+        ), coordinator.isExpanded == targetExpanded,
+           targetScreenID == screenID
+        else { return }
+        displayContext.updatePresentationSurfaceSize(targetFrame.size)
+        displayContext.setExpandedContentInteractive(targetExpanded)
+        panel.setFrame(targetFrame, display: true, animate: false)
+    }
+
+    private var visibleSurfaceFrame: CGRect {
+        let size = displayContext.presentationSurfaceSize
+        guard size.width > 0, size.height > 0 else { return panel.frame }
+        return IslandPanelGeometry.surfaceFrame(size: size, within: panel.frame)
     }
 }
 

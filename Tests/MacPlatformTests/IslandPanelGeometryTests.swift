@@ -3,6 +3,63 @@ import CoreGraphics
 @testable import MacPlatform
 
 final class IslandPanelGeometryTests: XCTestCase {
+    func testTransitionHostFrameContainsBothEndpointsAtTheSameTopCenterAnchor() {
+        let compact = CGRect(x: 543.5, y: 950, width: 425, height: 32)
+        let expanded = CGRect(x: 356, y: 522, width: 800, height: 460)
+
+        let host = IslandPanelGeometry.transitionHostFrame(
+            compactFrame: compact,
+            expandedFrame: expanded
+        )
+
+        XCTAssertEqual(host, expanded)
+        XCTAssertEqual(host.midX, compact.midX)
+        XCTAssertEqual(host.maxY, compact.maxY)
+    }
+
+    func testTransitionHostKeepsTheCurrentLargerSurfaceUntilCompletion() {
+        let compact = CGRect(x: 507.5, y: 950, width: 497, height: 32)
+        let expanded = CGRect(x: 356, y: 522, width: 800, height: 460)
+
+        let host = IslandPanelGeometry.transitionHostFrame(
+            compactFrame: compact,
+            expandedFrame: expanded,
+            minimumHostSize: CGSize(width: 960, height: 520)
+        )
+
+        XCTAssertEqual(host, CGRect(x: 276, y: 462, width: 960, height: 520))
+        XCTAssertEqual(host.midX, expanded.midX)
+        XCTAssertEqual(host.maxY, expanded.maxY)
+    }
+
+    func testSurfaceFramesStayTopCenteredForEveryInterpolatedSize() {
+        let host = CGRect(x: 356, y: 522, width: 800, height: 460)
+        let samples: [(CGSize, CGRect)] = [
+            (CGSize(width: 425, height: 32), CGRect(x: 543.5, y: 950, width: 425, height: 32)),
+            (CGSize(width: 518.75, height: 139), CGRect(x: 496.625, y: 843, width: 518.75, height: 139)),
+            (CGSize(width: 612.5, height: 246), CGRect(x: 449.75, y: 736, width: 612.5, height: 246)),
+            (CGSize(width: 706.25, height: 353), CGRect(x: 402.875, y: 629, width: 706.25, height: 353)),
+            (CGSize(width: 800, height: 460), host),
+        ]
+
+        for (size, expected) in samples {
+            let surface = IslandPanelGeometry.surfaceFrame(size: size, within: host)
+            XCTAssertEqual(surface, expected)
+            XCTAssertEqual(surface.midX, host.midX)
+            XCTAssertEqual(surface.maxY, host.maxY)
+        }
+    }
+
+    func testNewTransitionGenerationInvalidatesEarlierCompletion() {
+        var state = IslandPanelTransitionState()
+        let expanding = state.begin(targetExpanded: true)
+        let collapsing = state.begin(targetExpanded: false)
+
+        XCTAssertFalse(state.acceptsCompletion(generation: expanding, targetExpanded: true))
+        XCTAssertTrue(state.acceptsCompletion(generation: collapsing, targetExpanded: false))
+        XCTAssertFalse(state.acceptsCompletion(generation: collapsing, targetExpanded: true))
+    }
+
     func testCompactAndExpandedFramesShareTopCenterAnchor() {
         let screenFrame = CGRect(x: -1_600, y: 120, width: 1_440, height: 900)
         let compact = IslandPanelGeometry.frame(

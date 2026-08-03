@@ -75,6 +75,40 @@ public struct PusherSummary: Codable, Equatable, Sendable {
     }
 }
 
+public struct PusherCompactSummary: Equatable, Sendable {
+    public let planned: Int
+    public let processing: Int
+    public let done: Int
+    public let urgentProcessing: Int
+    public let progressProcessing: Int
+    public let planningProcessing: Int
+
+    public init(
+        planned: Int,
+        processing: Int,
+        done: Int,
+        urgentProcessing: Int,
+        progressProcessing: Int,
+        planningProcessing: Int
+    ) {
+        self.planned = planned
+        self.processing = processing
+        self.done = done
+        self.urgentProcessing = urgentProcessing
+        self.progressProcessing = progressProcessing
+        self.planningProcessing = planningProcessing
+    }
+
+    public static let zero = PusherCompactSummary(
+        planned: 0,
+        processing: 0,
+        done: 0,
+        urgentProcessing: 0,
+        progressProcessing: 0,
+        planningProcessing: 0
+    )
+}
+
 public struct PusherBoard: Codable, Equatable, Sendable {
     public let businessDay: BusinessDay
     public private(set) var allTasks: [PusherTask]
@@ -90,6 +124,18 @@ public struct PusherBoard: Codable, Equatable, Sendable {
             planned: tasks(in: .planned).count,
             processing: tasks(in: .processing).count,
             done: tasks(in: .done).count
+        )
+    }
+
+    public var compactSummary: PusherCompactSummary {
+        let processingTasks = tasks(in: .processing)
+        return PusherCompactSummary(
+            planned: tasks(in: .planned).count,
+            processing: processingTasks.count,
+            done: tasks(in: .done).count,
+            urgentProcessing: processingTasks.count { $0.urgency == .urgent },
+            progressProcessing: processingTasks.count { $0.urgency == .progress },
+            planningProcessing: processingTasks.count { $0.urgency == .planning }
         )
     }
 

@@ -57,12 +57,12 @@ public enum TimerFeatureFactory {
             systemImage: "timer",
             defaultOrder: 0,
             metrics: FunctionCardMetrics(
-                compactWidth: 340,
-                compactHeight: 38,
-                compactLeadingWidth: 120,
-                compactTrailingWidth: 140,
-                expandedWidth: 760,
-                expandedHeight: 420
+                compactWidth: 260,
+                compactHeight: 32,
+                compactLeadingWidth: 144,
+                compactTrailingWidth: 72,
+                expandedWidth: 800,
+                expandedHeight: 460
             ),
             makeCompactLeadingView: { AnyView(TimerCompactLeadingView(store: store)) },
             makeCompactTrailingView: { AnyView(TimerCompactTrailingView(store: store)) },
@@ -100,23 +100,14 @@ private struct TimerCompactTrailingView: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             if let task = store.dayState?.summaryTask {
                 let remainingSeconds = store.remainingSeconds(for: task, at: context.date)
-                let progress = TimerProgressSnapshot(
-                    targetSeconds: task.targetSeconds,
-                    remainingSeconds: remainingSeconds
-                )
-                HStack(spacing: 8) {
-                    TimerTaskProgressBar(ratio: progress.ratio, color: Color(hex: task.colorHex))
-                        .frame(minWidth: 56, idealWidth: 92, maxWidth: 112)
-                        .frame(height: 4)
-                    if task.status == .completed {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    } else {
-                        Text(formatDuration(remainingSeconds))
-                            .monospacedDigit()
-                            .foregroundStyle(TimerIslandAppearance.secondaryText)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
+                if task.status == .completed {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Text(formatDuration(remainingSeconds))
+                        .monospacedDigit()
+                        .foregroundStyle(TimerIslandAppearance.secondaryText)
+                        .fixedSize(horizontal: true, vertical: false)
                 }
             } else {
                 Text("未配置")

@@ -62,12 +62,12 @@ public enum PusherFeatureFactory {
             systemImage: "rectangle.3.group.fill",
             defaultOrder: 1,
             metrics: FunctionCardMetrics(
-                compactWidth: 300,
-                compactHeight: 38,
-                compactLeadingWidth: 90,
-                compactTrailingWidth: 150,
-                expandedWidth: 920,
-                expandedHeight: 480
+                compactWidth: 340,
+                compactHeight: 32,
+                compactLeadingWidth: 128,
+                compactTrailingWidth: 184,
+                expandedWidth: 960,
+                expandedHeight: 520
             ),
             makeCompactLeadingView: { AnyView(PusherCompactLeadingView(store: store)) },
             makeCompactTrailingView: { AnyView(PusherCompactTrailingView(store: store)) },
@@ -90,11 +90,16 @@ private struct PusherCompactLeadingView: View {
     @Bindable var store: PusherStore
 
     var body: some View {
-        let summary = store.board?.summary ?? PusherSummary(planned: 0, processing: 0, done: 0)
-        Label("\(summary.planned)", systemImage: "circle.dashed")
-            .foregroundStyle(.green)
-            .monospacedDigit()
-            .accessibilityLabel("计划 \(summary.planned)")
+        let summary = store.board?.compactSummary ?? .zero
+        HStack(spacing: 6) {
+            Label("\(summary.planned)", systemImage: "circle.dashed")
+                .foregroundStyle(.orange)
+            Label("\(summary.done)", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        }
+        .monospacedDigit()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Planned \(summary.planned)，Done \(summary.done)")
     }
 }
 
@@ -102,14 +107,34 @@ private struct PusherCompactTrailingView: View {
     @Bindable var store: PusherStore
 
     var body: some View {
-        let summary = store.board?.summary ?? PusherSummary(planned: 0, processing: 0, done: 0)
-        HStack(spacing: 8) {
-            Label("\(summary.processing)", systemImage: "arrow.forward.circle").foregroundStyle(.blue)
-            Text("|").foregroundStyle(.tertiary)
-            Label("\(summary.done)", systemImage: "checkmark.circle.fill").foregroundStyle(.red)
+        let summary = store.board?.compactSummary ?? .zero
+        HStack(spacing: 6) {
+            Label("\(summary.processing)", systemImage: "arrow.forward.circle.fill")
+                .foregroundStyle(.blue)
+            PusherCompactUrgencyCount(count: summary.urgentProcessing, color: .red)
+            PusherCompactUrgencyCount(count: summary.progressProcessing, color: .blue)
+            PusherCompactUrgencyCount(count: summary.planningProcessing, color: .pink)
         }
         .monospacedDigit()
-        .accessibilityLabel("推进 \(summary.processing)，完成 \(summary.done)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            "Processing \(summary.processing)，紧急 \(summary.urgentProcessing)，推进 \(summary.progressProcessing)，规划 \(summary.planningProcessing)"
+        )
+    }
+}
+
+private struct PusherCompactUrgencyCount: View {
+    let count: Int
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Circle()
+                .fill(color)
+                .frame(width: 5, height: 5)
+            Text("\(count)")
+        }
+        .foregroundStyle(color)
     }
 }
 

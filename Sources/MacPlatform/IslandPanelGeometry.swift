@@ -13,7 +13,46 @@ enum IslandPanelAnimation {
     }
 }
 
+struct IslandPanelTransitionState {
+    private(set) var generation: UInt64 = 0
+    private(set) var targetExpanded = false
+
+    mutating func begin(targetExpanded: Bool) -> UInt64 {
+        generation &+= 1
+        self.targetExpanded = targetExpanded
+        return generation
+    }
+
+    func acceptsCompletion(generation: UInt64, targetExpanded: Bool) -> Bool {
+        self.generation == generation && self.targetExpanded == targetExpanded
+    }
+}
+
 public enum IslandPanelGeometry {
+    public static func transitionHostFrame(
+        compactFrame: CGRect,
+        expandedFrame: CGRect,
+        minimumHostSize: CGSize = .zero
+    ) -> CGRect {
+        let width = max(compactFrame.width, expandedFrame.width, max(0, minimumHostSize.width))
+        let height = max(compactFrame.height, expandedFrame.height, max(0, minimumHostSize.height))
+        return CGRect(
+            x: expandedFrame.midX - width / 2,
+            y: expandedFrame.maxY - height,
+            width: width,
+            height: height
+        )
+    }
+
+    public static func surfaceFrame(size: CGSize, within hostFrame: CGRect) -> CGRect {
+        CGRect(
+            x: hostFrame.midX - size.width / 2,
+            y: hostFrame.maxY - size.height,
+            width: size.width,
+            height: size.height
+        )
+    }
+
     public static func physicalNotchSize(
         screenWidth: CGFloat,
         safeTopInset: CGFloat,
