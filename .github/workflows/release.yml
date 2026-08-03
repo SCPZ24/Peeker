@@ -1,0 +1,58 @@
+name: Prepare signed Peeker release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version without v prefix"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: swift test
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
+        run: |
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+          security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+      - name: Build signed archive
+        env:
+          PEEKER_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+        run: ./scripts/package-release.sh "${{ inputs.version }}"
+      - name: Submit for notarization
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          xcrun notarytool submit "dist/Peeker-v${{ inputs.version }}.zip" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple dist/Peeker.app
+      - name: Repackage stapled app
+        run: |
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent dist/Peeker.app "dist/Peeker-v${{ inputs.version }}.zip"
+          /usr/bin/shasum -a 256 "dist/Peeker-v${{ inputs.version }}.zip" > "dist/Peeker-v${{ inputs.version }}.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "Peeker-v${{ inputs.version }}"
+          path: |
+            dist/Peeker-v${{ inputs.version }}.zip
+            dist/Peeker-v${{ inputs.version }}.zip.sha256

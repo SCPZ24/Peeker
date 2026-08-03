@@ -1,0 +1,23 @@
+cask "peeker" do
+  version "__VERSION__"
+  sha256 "__SHA256__"
+
+  url "https://github.com/SCPZ24/Peeker/releases/download/v#{version}/Peeker-v#{version}.zip"
+  name "Peeker"
+  desc "Low-distraction timer and daily progress island"
+  homepage "https://github.com/SCPZ24/Peeker"
+
+  depends_on macos: :tahoe
+
+  app "Peeker.app"
+
+  zap trash: [
+    "~/Library/Application Support/Peeker",
+    "~/Library/Preferences/com.scpz24.Peeker.plist",
+  ]
+
+  caveats <<~EOS
+    Peeker v1 is distributed without notarization. On first launch, macOS may
+    require you to allow the app in System Settings > Privacy & Security.
+  EOS
+end

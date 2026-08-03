@@ -1,5 +1,11 @@
-# MacOS
+# macOS
 .DS_Store
 
-
+# Existing local review artifacts
 .code-review-graph
+
+# Swift and local app artifacts
+.build/
+dist/
+DerivedData/
+*.xcuserstate
