@@ -54,7 +54,10 @@ If `xcodebuild -version` reports that the active developer directory is Command 
 - Exercise hover, pin, Escape, outside click, Popovers, text editing and drag blockers.
 - Start a Timer, sleep the Mac through its target, and verify one completion sound after wake.
 - Quit with a Timer running, relaunch after its target, and verify completion without a stale sound.
-- Move Pusher tasks within and across columns and relaunch to verify order.
+- Prepare at least three Planned tasks, two Processing tasks and one Done task. Move Planned into empty and nonempty target columns at the head, middle and tail; move the first task of one column to its tail, the tail task to its head, and swap adjacent tasks. Every accepted drop must visually settle before persistence finishes and must survive relaunch in the same order.
+- Cancel a Pusher drag outside the island and confirm that no task or compact count changes. With a failing test repository, confirm that the optimistic destination appears first, then the task animates back to its exact source position with the visible recovery error.
+- Drag ordinary text or another app's content over a Pusher column and confirm that Peeker advertises no move and changes no task. During a deliberately suspended move/recovery test, confirm that a second drag and task CRUD remain disabled until persistence and deferred recovery both finish.
+- Record a Pusher drop at 60 fps and inspect the first three frames after mouse-up. The task must not remain as a suspended drag preview for roughly half a second, and a successful CRUD completion must not cause a second jump.
 - Check all Spaces and full-screen applications.
 - Toggle the login item and compare the UI with macOS System Settings.
 

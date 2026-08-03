@@ -158,6 +158,13 @@ public struct PusherBoard: Codable, Equatable, Sendable {
         allTasks.filter { $0.status == status }.sorted { $0.position < $1.position }
     }
 
+    func hasSameTaskPlacement(as other: PusherBoard) -> Bool {
+        businessDay == other.businessDay
+            && PusherStatus.allCases.allSatisfy { status in
+                tasks(in: status).map(\.id) == other.tasks(in: status).map(\.id)
+            }
+    }
+
     public mutating func insert(_ task: PusherTask) throws {
         guard !allTasks.contains(where: { $0.id == task.id }) else { throw PusherDomainError.duplicateTask }
         var inserted = task
@@ -193,20 +200,29 @@ public struct PusherBoard: Codable, Equatable, Sendable {
             throw PusherDomainError.taskNotFound
         }
         let sourceStatus = allTasks[sourceIndex].status
-        let destinationCount = tasks(in: status).count - (sourceStatus == status ? 1 : 0)
-        guard destination >= 0, destination <= destinationCount else {
+        let sourcePosition = tasks(in: sourceStatus).firstIndex { $0.id == taskID }
+        let visibleDestinationCount = tasks(in: status).count
+        guard destination >= 0, destination <= visibleDestinationCount else {
             throw PusherDomainError.invalidDestination
+        }
+        let normalizedDestination: Int
+        if sourceStatus == status, let sourcePosition, destination > sourcePosition {
+            normalizedDestination = destination - 1
+        } else {
+            normalizedDestination = destination
         }
 
         var task = allTasks.remove(at: sourceIndex)
         var destinationTasks = tasks(in: status)
         task.status = status
-        destinationTasks.insert(task, at: destination)
+        destinationTasks.insert(task, at: normalizedDestination)
+        for index in destinationTasks.indices {
+            destinationTasks[index].position = index
+        }
 
         allTasks.removeAll { $0.status == status }
         allTasks.append(contentsOf: destinationTasks)
-        normalize(sourceStatus)
-        normalize(status)
+        if sourceStatus != status { normalize(sourceStatus) }
     }
 
     private mutating func normalizeAll() {

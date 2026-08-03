@@ -31,6 +31,39 @@ final class PusherDomainTests: XCTestCase {
         XCTAssertEqual(board.summary, PusherSummary(planned: 1, processing: 1, done: 0))
     }
 
+    func testSameColumnMoveUsesPreMoveInsertionSlots() throws {
+        let day = makeDay()
+        let a = try PusherTask(title: "A", urgency: .planning, position: 0, businessDayID: day.id)
+        let b = try PusherTask(title: "B", urgency: .planning, position: 1, businessDayID: day.id)
+        let c = try PusherTask(title: "C", urgency: .planning, position: 2, businessDayID: day.id)
+        var board = PusherBoard(businessDay: day, tasks: [a, b, c])
+
+        try board.move(taskID: a.id, to: .planned, at: 3)
+        XCTAssertEqual(board.tasks(in: .planned).map(\.title), ["B", "C", "A"])
+        XCTAssertEqual(board.tasks(in: .planned).map(\.position), [0, 1, 2])
+
+        try board.move(taskID: a.id, to: .planned, at: 0)
+        XCTAssertEqual(board.tasks(in: .planned).map(\.title), ["A", "B", "C"])
+        XCTAssertEqual(board.tasks(in: .planned).map(\.position), [0, 1, 2])
+
+        try board.move(taskID: a.id, to: .planned, at: 2)
+        XCTAssertEqual(board.tasks(in: .planned).map(\.title), ["B", "A", "C"])
+        XCTAssertEqual(board.tasks(in: .planned).map(\.position), [0, 1, 2])
+    }
+
+    func testMoveRejectsInsertionSlotsOutsideVisibleDestinationRange() throws {
+        let day = makeDay()
+        let task = try PusherTask(title: "A", urgency: .planning, businessDayID: day.id)
+        var board = PusherBoard(businessDay: day, tasks: [task])
+
+        XCTAssertThrowsError(try board.move(taskID: task.id, to: .planned, at: -1)) {
+            XCTAssertEqual($0 as? PusherDomainError, .invalidDestination)
+        }
+        XCTAssertThrowsError(try board.move(taskID: task.id, to: .planned, at: 2)) {
+            XCTAssertEqual($0 as? PusherDomainError, .invalidDestination)
+        }
+    }
+
     func testCompactSummaryBreaksDownUrgencyOnlyInsideProcessing() throws {
         let day = makeDay()
         let tasks = [

@@ -176,24 +176,21 @@ private struct PusherExpandedView: View {
                     status: .planned,
                     tasks: store.board?.tasks(in: .planned) ?? [],
                     store: store,
-                    edit: { popover = .edit($0) },
-                    setDragging: setDragging
+                    edit: { popover = .edit($0) }
                 )
                 PusherColumn(
                     title: "Processing",
                     status: .processing,
                     tasks: store.board?.tasks(in: .processing) ?? [],
                     store: store,
-                    edit: { popover = .edit($0) },
-                    setDragging: setDragging
+                    edit: { popover = .edit($0) }
                 )
                 PusherColumn(
                     title: "Done",
                     status: .done,
                     tasks: store.board?.tasks(in: .done) ?? [],
                     store: store,
-                    edit: { popover = .edit($0) },
-                    setDragging: setDragging
+                    edit: { popover = .edit($0) }
                 )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -206,6 +203,7 @@ private struct PusherExpandedView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(store.isMovePending)
 
                 Button {
                     popover = .calendar
@@ -214,12 +212,23 @@ private struct PusherExpandedView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .buttonStyle(.bordered)
+                .disabled(store.isMovePending)
             }
             .frame(width: 140)
         }
         .overlay(alignment: .bottomLeading) {
             if let error = store.errorMessage {
                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+            }
+        }
+        .onDragSessionUpdated { session in
+            switch session.phase {
+            case .initial, .active:
+                setDragging(true)
+            case .ended, .dataTransferCompleted:
+                setDragging(false)
+            @unknown default:
+                setDragging(false)
             }
         }
         .onChange(of: popover?.id) { _, newValue in
@@ -271,7 +280,9 @@ private struct PusherColumn: View {
     let tasks: [PusherTask]
     @Bindable var store: PusherStore
     let edit: (PusherTask) -> Void
-    let setDragging: @MainActor (Bool) -> Void
+    @State private var taskFrames: [UUID: CGRect] = [:]
+
+    private var coordinateSpaceName: String { "pusher-column-\(status.rawValue)" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -287,20 +298,31 @@ private struct PusherColumn: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 7) {
-                        ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
+                        ForEach(Array(tasks.enumerated()), id: \.element.id) { _, task in
                             PusherTaskCard(task: task, edit: { edit(task) })
-                                .draggable(task.id.uuidString) {
+                                .background {
+                                    GeometryReader { geometry in
+                                        Color.clear.preference(
+                                            key: PusherTaskFramePreferenceKey.self,
+                                            value: [
+                                                task.id: geometry.frame(
+                                                    in: .named(coordinateSpaceName)
+                                                )
+                                            ]
+                                        )
+                                    }
+                                }
+                                .allowsHitTesting(!store.isMovePending)
+                                .draggable(
+                                    PusherDragPayload(
+                                        taskID: task.id,
+                                        businessDayID: task.businessDayID
+                                    )
+                                ) {
                                     PusherTaskCard(task: task, edit: {})
                                         .frame(width: 180)
-                                        .onAppear { setDragging(true) }
-                                        .onDisappear { setDragging(false) }
                                 }
-                                .dropDestination(for: String.self) { values, _ in
-                                    guard let raw = values.first, let id = UUID(uuidString: raw) else { return false }
-                                    Task { _ = await store.move(taskID: id, to: status, at: index) }
-                                    setDragging(false)
-                                    return true
-                                }
+                                .dragConfiguration(DragConfiguration(allowMove: true))
                         }
                     }
                 }
@@ -308,12 +330,54 @@ private struct PusherColumn: View {
         }
         .padding(10)
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
-        .dropDestination(for: String.self) { values, _ in
-            guard let raw = values.first, let id = UUID(uuidString: raw) else { return false }
-            Task { _ = await store.move(taskID: id, to: status, at: tasks.count) }
-            setDragging(false)
-            return true
+        .coordinateSpace(name: coordinateSpaceName)
+        .onPreferenceChange(PusherTaskFramePreferenceKey.self) { taskFrames = $0 }
+        .dropDestination(
+            for: PusherDragPayload.self,
+            isEnabled: !store.isMovePending
+        ) { values, session in
+            guard let board = store.board,
+                  let payload = values.first,
+                  let taskID = payload.taskID(in: board) else { return }
+            let rows = tasks.enumerated().compactMap { index, task -> PusherDropRow? in
+                guard let frame = taskFrames[task.id] else { return nil }
+                return PusherDropRow(taskIndex: index, frame: frame)
+            }
+            let insertionIndex = PusherDropPlacement.insertionIndex(
+                locationY: session.location.y,
+                rows: rows,
+                taskCount: tasks.count
+            )
+            var transaction: PusherMoveTransaction?
+            withAnimation(.easeInOut(duration: 0.12)) {
+                transaction = store.beginMove(
+                    taskID: taskID,
+                    to: status,
+                    insertionIndex: insertionIndex
+                )
+            }
+            if let transaction {
+                Task { await store.persistMove(transaction) }
+            }
         }
+        .dropConfiguration { session in
+            guard !store.isMovePending,
+                  session.localSession != nil,
+                  session.itemsCount == 1 else {
+                return DropConfiguration(operation: .forbidden)
+            }
+            var configuration = DropConfiguration(operation: .move)
+            configuration.acceptedItemCount = 1
+            return configuration
+        }
+    }
+}
+
+private struct PusherTaskFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
     }
 }
 

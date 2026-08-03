@@ -9,6 +9,7 @@ public final class PusherStore {
     public private(set) var board: PusherBoard?
     public private(set) var snapshots: [PusherDailySnapshot] = []
     public private(set) var isLoading = false
+    public private(set) var isMovePending = false
     public private(set) var errorMessage: String?
     public var carryIncomplete: Bool
     public var refreshTime: RefreshTime
@@ -19,6 +20,9 @@ public final class PusherStore {
     @ObservationIgnored private let eventHub: TemporalEventHub
     @ObservationIgnored private let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     @ObservationIgnored private let onCarryIncompleteChanged: @MainActor (Bool) -> Void
+    @ObservationIgnored private var pendingMoveID: UUID?
+    @ObservationIgnored private var hasDeferredWake = false
+    @ObservationIgnored private var isBoardMutationPending = false
     private let boundaryKey = TemporalEventKey("pusher.boundary")
 
     public init(
@@ -42,8 +46,8 @@ public final class PusherStore {
     }
 
     public func load() async {
+        guard acquireBoardMutation() else { return }
         isLoading = true
-        defer { isLoading = false }
         do {
             let day = resolver.businessDay(
                 containing: clock.now(),
@@ -61,11 +65,14 @@ public final class PusherStore {
         } catch {
             errorMessage = "Pusher 无法载入：\(error.localizedDescription)"
         }
+        isLoading = false
+        await finishBoardMutation()
     }
 
     public func create(title: String, urgency: PusherUrgency, repeatsDaily: Bool) async -> Bool {
-        guard var current = board else { return false }
+        guard var current = board, acquireBoardMutation() else { return false }
         let old = current
+        let succeeded: Bool
         do {
             var task = try PusherTask(
                 title: title,
@@ -77,12 +84,14 @@ public final class PusherStore {
             board = current
             try await repository.saveBoard(current)
             errorMessage = nil
-            return true
+            succeeded = true
         } catch {
             board = old
             errorMessage = "无法创建任务：\(error.localizedDescription)"
-            return false
+            succeeded = false
         }
+        await finishBoardMutation()
+        return succeeded
     }
 
     public func update(
@@ -92,8 +101,10 @@ public final class PusherStore {
         repeatsDaily: Bool
     ) async -> Bool {
         guard var current = board,
-              var task = current.allTasks.first(where: { $0.id == taskID }) else { return false }
+              var task = current.allTasks.first(where: { $0.id == taskID }),
+              acquireBoardMutation() else { return false }
         let old = current
+        let succeeded: Bool
         do {
             let normalized = title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty else { throw PusherDomainError.blankTitle }
@@ -105,47 +116,92 @@ public final class PusherStore {
             board = current
             try await repository.saveBoard(current)
             errorMessage = nil
-            return true
+            succeeded = true
         } catch {
             board = old
             errorMessage = "无法编辑任务：\(error.localizedDescription)"
-            return false
+            succeeded = false
         }
+        await finishBoardMutation()
+        return succeeded
     }
 
     public func delete(taskID: UUID) async -> Bool {
-        guard var current = board else { return false }
+        guard var current = board, acquireBoardMutation() else { return false }
         let old = current
+        let succeeded: Bool
         do {
             try current.remove(taskID: taskID)
             board = current
             try await repository.deleteTask(id: taskID)
             errorMessage = nil
-            return true
+            succeeded = true
         } catch {
             board = old
             errorMessage = "无法删除任务：\(error.localizedDescription)"
+            succeeded = false
+        }
+        await finishBoardMutation()
+        return succeeded
+    }
+
+    func beginMove(
+        taskID: UUID,
+        to status: PusherStatus,
+        insertionIndex: Int
+    ) -> PusherMoveTransaction? {
+        guard let current = board, acquireBoardMutation() else { return nil }
+        do {
+            var moved = current
+            try moved.move(taskID: taskID, to: status, at: insertionIndex)
+            guard !moved.hasSameTaskPlacement(as: current) else {
+                isBoardMutationPending = false
+                return nil
+            }
+
+            let transaction = PusherMoveTransaction(before: current, after: moved)
+            board = moved
+            isMovePending = true
+            pendingMoveID = transaction.id
+            errorMessage = nil
+            return transaction
+        } catch {
+            isBoardMutationPending = false
+            return nil
+        }
+    }
+
+    @discardableResult
+    func persistMove(_ transaction: PusherMoveTransaction) async -> Bool {
+        guard pendingMoveID == transaction.id else { return false }
+        await Task.yield()
+        do {
+            try await repository.reorderTasks(
+                businessDayID: transaction.after.businessDay.id,
+                orderedTasks: transaction.after.allTasks
+            )
+            guard pendingMoveID == transaction.id else { return false }
+            errorMessage = nil
+            await finishMoveTransaction()
+            return true
+        } catch {
+            guard pendingMoveID == transaction.id else { return false }
+            withAnimation(.easeInOut(duration: 0.12)) {
+                board = transaction.before
+            }
+            errorMessage = "无法移动任务，已恢复原位置：\(error.localizedDescription)"
+            await finishMoveTransaction()
             return false
         }
     }
 
     public func move(taskID: UUID, to status: PusherStatus, at position: Int) async -> Bool {
-        guard var current = board else { return false }
-        let old = current
-        do {
-            try current.move(taskID: taskID, to: status, at: position)
-            board = current
-            try await repository.reorderTasks(
-                businessDayID: current.businessDay.id,
-                orderedTasks: current.allTasks
-            )
-            errorMessage = nil
-            return true
-        } catch {
-            board = old
-            errorMessage = "无法移动任务，已恢复原位置：\(error.localizedDescription)"
-            return false
-        }
+        guard let transaction = beginMove(
+            taskID: taskID,
+            to: status,
+            insertionIndex: position
+        ) else { return false }
+        return await persistMove(transaction)
     }
 
     public func updateRefreshTime(_ refreshTime: RefreshTime) async {
@@ -160,6 +216,15 @@ public final class PusherStore {
     }
 
     public func handleWake() async {
+        guard acquireBoardMutation() else {
+            hasDeferredWake = true
+            return
+        }
+        await recoverAndScheduleBoundary()
+        await finishBoardMutation()
+    }
+
+    private func recoverAndScheduleBoundary() async {
         do {
             try await recoverThroughNow()
             await scheduleBoundary()
@@ -195,5 +260,25 @@ public final class PusherStore {
         await eventHub.set(boundaryKey, at: board?.businessDay.end, priority: 1) { [weak self] in
             await self?.handleWake()
         }
+    }
+
+    private func finishMoveTransaction() async {
+        pendingMoveID = nil
+        await finishBoardMutation()
+        isMovePending = false
+    }
+
+    private func acquireBoardMutation() -> Bool {
+        guard !isBoardMutationPending else { return false }
+        isBoardMutationPending = true
+        return true
+    }
+
+    private func finishBoardMutation() async {
+        while hasDeferredWake {
+            hasDeferredWake = false
+            await recoverAndScheduleBoundary()
+        }
+        isBoardMutationPending = false
     }
 }
