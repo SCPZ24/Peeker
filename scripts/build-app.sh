@@ -15,12 +15,31 @@ APP_NAME="Peeker"
 APP_BUNDLE="$ROOT_DIR/dist/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
+RESOLVED_FILE="$ROOT_DIR/Package.resolved"
+GRDB_CHECKOUT="$ROOT_DIR/.build/checkouts/GRDB.swift"
 export CLANG_MODULE_CACHE_PATH="$ROOT_DIR/.build/ModuleCache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$ROOT_DIR/.build/ModuleCache"
 
 cd "$ROOT_DIR"
-swift build --disable-sandbox -c "$CONFIGURATION" --product "$APP_NAME"
-BIN_DIR="$(swift build --disable-sandbox -c "$CONFIGURATION" --show-bin-path)"
+if [[ ! -f "$RESOLVED_FILE" ]]; then
+  echo "Package.resolved is required for offline builds: $RESOLVED_FILE" >&2
+  echo "Run ./scripts/bootstrap-dependencies.sh once in a networked environment." >&2
+  exit 3
+fi
+
+if [[ ! -d "$GRDB_CHECKOUT" ]]; then
+  echo "GRDB checkout is missing: $GRDB_CHECKOUT" >&2
+  echo "Run ./scripts/bootstrap-dependencies.sh once in a networked environment." >&2
+  exit 4
+fi
+
+SWIFTPM_BUILD_FLAGS=(
+  --disable-sandbox
+  --disable-automatic-resolution
+)
+
+swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --product "$APP_NAME"
+BIN_DIR="$(swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --show-bin-path)"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$CONTENTS/Resources"

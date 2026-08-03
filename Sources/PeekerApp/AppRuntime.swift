@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 import PeekerCore
 import FunctionCardKit
@@ -12,6 +13,7 @@ import MacPlatform
 @MainActor
 final class AppRuntime {
     static let shared = AppRuntime()
+    private static let logger = Logger(subsystem: "com.scpz24.Peeker", category: "settings")
 
     let preferences: AppPreferences
     let screens: ScreenTopologyService
@@ -149,8 +151,15 @@ final class AppRuntime {
     }
 
     func openSettings() {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         NSApp.activate(ignoringOtherApps: true)
+        guard let applicationMenu = NSApp.mainMenu?.items.first?.submenu,
+              let settingsIndex = applicationMenu.items.firstIndex(where: {
+                  $0.keyEquivalent == "," && $0.keyEquivalentModifierMask.contains(.command)
+              }) else {
+            Self.logger.error("SwiftUI Settings menu item was not available")
+            return
+        }
+        applicationMenu.performActionForItem(at: settingsIndex)
     }
 }
 

@@ -12,14 +12,16 @@ public struct IslandRootView: View {
     }
 
     public var body: some View {
-        Group {
+        ZStack {
             if coordinator.isExpanded {
                 expandedContent
+                    .transition(.opacity)
             } else {
                 compactContent
+                    .transition(.opacity)
             }
         }
-        .frame(width: width, height: height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black, in: RoundedRectangle(cornerRadius: coordinator.isExpanded ? 22 : 19))
         .foregroundStyle(.white)
         .contentShape(RoundedRectangle(cornerRadius: coordinator.isExpanded ? 22 : 19))
@@ -27,7 +29,6 @@ public struct IslandRootView: View {
             if hovering { coordinator.pointerEntered() }
             else { coordinator.pointerExited() }
         }
-        .onTapGesture { coordinator.togglePin() }
         .animation(
             reduceMotion ? nil : .easeInOut(duration: coordinator.isExpanded ? 0.22 : 0.18),
             value: coordinator.presentation.base
@@ -50,7 +51,7 @@ public struct IslandRootView: View {
                         coordinator.select(card.id)
                     } label: {
                         Label(card.name, systemImage: card.systemImage)
-                            .labelStyle(.titleAndIcon)
+                            .labelStyle(.iconOnly)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(
@@ -60,6 +61,7 @@ public struct IslandRootView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(card.name)
+                    .help(card.name)
                 }
 
                 Spacer(minLength: 4)
@@ -76,15 +78,10 @@ public struct IslandRootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(14)
-    }
-
-    private var width: CGFloat {
-        guard let metrics = coordinator.registry.selectedCard?.metrics else { return 280 }
-        return coordinator.isExpanded ? metrics.expandedWidth : min(460, max(280, metrics.compactWidth))
-    }
-
-    private var height: CGFloat {
-        guard let metrics = coordinator.registry.selectedCard?.metrics else { return 38 }
-        return coordinator.isExpanded ? metrics.expandedHeight : metrics.compactHeight
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { coordinator.togglePin() }
+        }
     }
 }

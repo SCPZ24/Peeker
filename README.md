@@ -9,12 +9,31 @@ The app uses Swift 6, SwiftUI, a narrow AppKit panel bridge, SwiftPM, GRDB 7.11.
 
 ## Local development
 
+On a new checkout, bootstrap SwiftPM dependencies once in a networked environment:
+
 ```bash
-swift test
+./scripts/bootstrap-dependencies.sh
+```
+
+After that, application builds are locked to `Package.resolved` and do not perform
+automatic dependency updates or remote fetches:
+
+```bash
+swift test --disable-automatic-resolution
 ./script/build_and_run.sh
 ```
 
-The run script creates `dist/Peeker.app` and opens it as a real GUI bundle. It supports `--debug`, `--logs`, `--telemetry` and `--verify` modes.
+The run script creates `dist/Peeker.app` and opens it as a real GUI bundle. It
+supports `--debug`, `--logs`, `--telemetry` and `--verify` modes. To open the
+last successfully built bundle without compiling, use:
+
+```bash
+./script/build_and_run.sh run-existing
+```
+
+If the local checkout or `Package.resolved` is missing, the build stops with an
+instruction to run the explicit bootstrap command instead of downloading GRDB
+implicitly.
 
 ## Local release candidate
 

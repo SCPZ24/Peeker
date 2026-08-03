@@ -1,4 +1,17 @@
 import CoreGraphics
+import Foundation
+
+enum IslandPanelAnimation {
+    static func duration(
+        requested: Bool,
+        isExpanded: Bool,
+        reduceMotion: Bool,
+        panelIsVisible: Bool
+    ) -> TimeInterval? {
+        guard requested, panelIsVisible, !reduceMotion else { return nil }
+        return isExpanded ? 0.22 : 0.18
+    }
+}
 
 public enum IslandPanelGeometry {
     public static func frame(

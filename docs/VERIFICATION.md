@@ -10,8 +10,13 @@
 - `./scripts/verify-bundle.sh` — plist and ad-hoc code signature passed; Gatekeeper rejection is expected for the intentionally unnotarized local artifact.
 - `./scripts/verify-cask.sh 1.0.0` — Ruby syntax passed and Homebrew inspected one Cask with no offenses.
 - Release candidate generated locally at `dist/Peeker.app` and `dist/Peeker-v1.0.0.zip`; `dist/` is gitignored and nothing was uploaded.
+- Offline application build contract — passed: `scripts/build-app.sh` requires `Package.resolved`, requires the project-local GRDB checkout, and builds with `--disable-automatic-resolution`.
+- Existing-bundle run path — added: `./script/build_and_run.sh run-existing` opens `dist/Peeker.app` without invoking SwiftPM.
 
-The local SwiftPM commands used a temporary mirror built from the official GRDB.swift v7.11.1 GitHub source archive because Git transport could not reach GitHub from the managed environment. The mirror configuration and its local `Package.resolved` were deleted after verification. The committed manifest retains the official exact dependency URL and version.
+The package lock is now present in `Package.resolved` at GRDB.swift 7.11.1. The
+explicit `scripts/bootstrap-dependencies.sh` command is the only documented
+networked dependency setup path; normal application builds do not perform
+automatic dependency resolution or updates.
 
 ## SKIPPED-XCODE
 

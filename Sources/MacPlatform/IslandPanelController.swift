@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import QuartzCore
 import SwiftUI
 import FunctionCardKit
 
@@ -132,7 +133,22 @@ public final class IslandPanelController {
             safeTopInset: screen.safeAreaInsets.top,
             margin: 16
         )
-        panel.setFrame(frame, display: true, animate: animated)
+        let duration = IslandPanelAnimation.duration(
+            requested: animated,
+            isExpanded: coordinator.isExpanded,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            panelIsVisible: panel.isVisible
+        )
+        guard let duration else {
+            panel.setFrame(frame, display: true, animate: false)
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            panel.animator().setFrame(frame, display: true)
+        }
     }
 }
 
