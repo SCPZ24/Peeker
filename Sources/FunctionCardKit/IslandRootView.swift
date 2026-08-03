@@ -59,13 +59,13 @@ public struct IslandRootView: View {
                     )
                     HStack(spacing: 0) {
                         card.makeCompactLeadingView()
-                            .frame(width: card.metrics.compactLeadingWidth, alignment: .leading)
                             .frame(width: sideReservation, alignment: .leading)
+                            .clipped()
                         Color.clear
                             .frame(width: physicalNotchSize.width)
                         card.makeCompactTrailingView()
-                            .frame(width: card.metrics.compactTrailingWidth, alignment: .trailing)
                             .frame(width: sideReservation, alignment: .trailing)
+                            .clipped()
                     }
                 } else {
                     HStack(spacing: 0) {

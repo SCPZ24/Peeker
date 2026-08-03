@@ -55,6 +55,26 @@ final class PusherDomainTests: XCTestCase {
         )
     }
 
+    func testCompactProcessingDisplayContainsOnlyTheThreeUrgencyStatuses() {
+        let summary = PusherCompactSummary(
+            planned: 9,
+            processing: 6,
+            done: 4,
+            urgentProcessing: 1,
+            progressProcessing: 2,
+            planningProcessing: 3
+        )
+
+        XCTAssertEqual(
+            summary.processingStatusCounts,
+            [
+                PusherCompactStatusCount(urgency: .urgent, count: 1),
+                PusherCompactStatusCount(urgency: .progress, count: 2),
+                PusherCompactStatusCount(urgency: .planning, count: 3),
+            ]
+        )
+    }
+
     func testCompactSummaryIsAllZeroForAnEmptyBoard() {
         let board = PusherBoard(businessDay: makeDay(), tasks: [])
 

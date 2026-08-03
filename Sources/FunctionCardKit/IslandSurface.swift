@@ -65,9 +65,10 @@ public final class IslandDisplayContext {
 
 enum IslandCompactLayout {
     static let horizontalPadding: CGFloat = 10
+    static let wingCompression: CGFloat = 64
 
     static func sideReservation(leadingWidth: CGFloat, trailingWidth: CGFloat) -> CGFloat {
-        max(0, max(leadingWidth, trailingWidth))
+        max(0, max(leadingWidth, trailingWidth) - wingCompression)
     }
 
     static func notchMidX(

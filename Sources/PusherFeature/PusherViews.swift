@@ -109,17 +109,26 @@ private struct PusherCompactTrailingView: View {
     var body: some View {
         let summary = store.board?.compactSummary ?? .zero
         HStack(spacing: 6) {
-            Label("\(summary.processing)", systemImage: "arrow.forward.circle.fill")
-                .foregroundStyle(.blue)
-            PusherCompactUrgencyCount(count: summary.urgentProcessing, color: .red)
-            PusherCompactUrgencyCount(count: summary.progressProcessing, color: .blue)
-            PusherCompactUrgencyCount(count: summary.planningProcessing, color: .pink)
+            ForEach(summary.processingStatusCounts) { status in
+                PusherCompactUrgencyCount(
+                    count: status.count,
+                    color: compactColor(for: status.urgency)
+                )
+            }
         }
         .monospacedDigit()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "Processing \(summary.processing)，紧急 \(summary.urgentProcessing)，推进 \(summary.progressProcessing)，规划 \(summary.planningProcessing)"
+            "紧急 \(summary.urgentProcessing)，推进 \(summary.progressProcessing)，规划 \(summary.planningProcessing)"
         )
+    }
+
+    private func compactColor(for urgency: PusherUrgency) -> Color {
+        switch urgency {
+        case .urgent: .red
+        case .progress: .blue
+        case .planning: .yellow
+        }
     }
 }
 

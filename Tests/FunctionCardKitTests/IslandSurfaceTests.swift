@@ -68,7 +68,7 @@ final class IslandSurfaceTests: XCTestCase {
         XCTAssertEqual(midpoint.bottom, 19)
     }
 
-    func testCompactWidthReservesBothWingsAndPhysicalNotch() {
+    func testCompactWidthCompressesTimerWingsBySixtyFourPointsAroundPhysicalNotch() {
         let width = IslandCompactLayout.width(
             baseWidth: 260,
             leadingWidth: 144,
@@ -77,15 +77,40 @@ final class IslandSurfaceTests: XCTestCase {
             horizontalPadding: 10
         )
 
-        XCTAssertEqual(width, 497)
+        XCTAssertEqual(width, 369)
         XCTAssertEqual(
             IslandCompactLayout.sideReservation(leadingWidth: 144, trailingWidth: 72),
-            144
+            80
         )
         XCTAssertEqual(
             IslandCompactLayout.notchMidX(
                 leadingWidth: 144,
                 trailingWidth: 72,
+                physicalNotchWidth: 189,
+                horizontalPadding: 10
+            ),
+            width / 2
+        )
+    }
+
+    func testCompactWidthCompressesPusherWingsBySixtyFourPointsAroundPhysicalNotch() {
+        let width = IslandCompactLayout.width(
+            baseWidth: 340,
+            leadingWidth: 128,
+            trailingWidth: 184,
+            physicalNotchWidth: 189,
+            horizontalPadding: 10
+        )
+
+        XCTAssertEqual(width, 449)
+        XCTAssertEqual(
+            IslandCompactLayout.sideReservation(leadingWidth: 128, trailingWidth: 184),
+            120
+        )
+        XCTAssertEqual(
+            IslandCompactLayout.notchMidX(
+                leadingWidth: 128,
+                trailingWidth: 184,
                 physicalNotchWidth: 189,
                 horizontalPadding: 10
             ),
@@ -117,7 +142,7 @@ final class IslandSurfaceTests: XCTestCase {
 
         XCTAssertEqual(
             metrics.compactSize(physicalNotchSize: CGSize(width: 189, height: 32)),
-            CGSize(width: 497, height: 32)
+            CGSize(width: 369, height: 32)
         )
         XCTAssertEqual(
             metrics.compactSize(physicalNotchSize: nil),

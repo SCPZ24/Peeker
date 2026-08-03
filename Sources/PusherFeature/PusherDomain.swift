@@ -107,6 +107,21 @@ public struct PusherCompactSummary: Equatable, Sendable {
         progressProcessing: 0,
         planningProcessing: 0
     )
+
+    var processingStatusCounts: [PusherCompactStatusCount] {
+        [
+            PusherCompactStatusCount(urgency: .urgent, count: urgentProcessing),
+            PusherCompactStatusCount(urgency: .progress, count: progressProcessing),
+            PusherCompactStatusCount(urgency: .planning, count: planningProcessing),
+        ]
+    }
+}
+
+struct PusherCompactStatusCount: Equatable, Identifiable, Sendable {
+    let urgency: PusherUrgency
+    let count: Int
+
+    var id: String { urgency.rawValue }
 }
 
 public struct PusherBoard: Codable, Equatable, Sendable {
