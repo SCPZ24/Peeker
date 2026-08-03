@@ -59,17 +59,41 @@ public enum TimerFeatureFactory {
             metrics: FunctionCardMetrics(
                 compactWidth: 340,
                 compactHeight: 38,
+                compactLeadingWidth: 120,
+                compactTrailingWidth: 140,
                 expandedWidth: 760,
                 expandedHeight: 420
             ),
-            makeCompactView: { AnyView(TimerCompactView(store: store)) },
+            makeCompactLeadingView: { AnyView(TimerCompactLeadingView(store: store)) },
+            makeCompactTrailingView: { AnyView(TimerCompactTrailingView(store: store)) },
             makeExpandedView: { AnyView(TimerExpandedView(store: store)) },
             makeSettingsView: { AnyView(TimerSettingsView(store: store)) }
         )
     }
 }
 
-private struct TimerCompactView: View {
+private struct TimerCompactLeadingView: View {
+    @Bindable var store: TimerStore
+
+    var body: some View {
+        if let task = store.dayState?.summaryTask {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color(hex: task.colorHex))
+                    .frame(width: 8, height: 8)
+                Text(task.name)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(TimerIslandAppearance.primaryText)
+            }
+        } else {
+            Label("Timer", systemImage: "timer")
+                .foregroundStyle(TimerIslandAppearance.secondaryText)
+        }
+    }
+}
+
+private struct TimerCompactTrailingView: View {
     @Bindable var store: TimerStore
 
     var body: some View {
@@ -81,14 +105,6 @@ private struct TimerCompactView: View {
                     remainingSeconds: remainingSeconds
                 )
                 HStack(spacing: 8) {
-                    Circle()
-                        .fill(Color(hex: task.colorHex))
-                        .frame(width: 8, height: 8)
-                    Text(task.name)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .foregroundStyle(TimerIslandAppearance.primaryText)
-                        .layoutPriority(1)
                     TimerTaskProgressBar(ratio: progress.ratio, color: Color(hex: task.colorHex))
                         .frame(minWidth: 56, idealWidth: 92, maxWidth: 112)
                         .frame(height: 4)
@@ -103,7 +119,7 @@ private struct TimerCompactView: View {
                     }
                 }
             } else {
-                Label("Timer 尚未配置", systemImage: "timer")
+                Text("未配置")
                     .foregroundStyle(TimerIslandAppearance.secondaryText)
             }
         }

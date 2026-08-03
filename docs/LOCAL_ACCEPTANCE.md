@@ -41,7 +41,12 @@ If `xcodebuild -version` reports that the active developer directory is Command 
 
 ## Manual hardware checks
 
-- Verify the island on notched and non-notched displays.
+- On a notched MacBook, verify compact and expanded surfaces meet the physical top edge with no bright or transparent seam and fully cover the camera region.
+- In compact Timer, verify the color dot and task name stay left of the physical notch while progress and remaining time stay right of it; verify the completed and unconfigured variants too.
+- In compact Pusher, verify Planned stays left of the physical notch while Processing and Done stay right of it, including the all-zero state.
+- On a non-notched display, verify the island remains top-attached with the same soft-rectangle silhouette and the compact summary has no artificial center gap.
+- Verify compact corners are visibly flatter than a capsule and expanded corners remain a larger soft rectangle.
+- Test Retina and scaled resolutions and a display whose global frame origin is negative; the island must remain horizontally centered and top-attached.
 - Disconnect the selected external display and confirm immediate fallback without automatic return.
 - Exercise hover, pin, Escape, outside click, Popovers, text editing and drag blockers.
 - Start a Timer, sleep the Mac through its target, and verify one completion sound after wake.

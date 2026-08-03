@@ -3,11 +3,17 @@ import PeekerCore
 
 public struct IslandRootView: View {
     @Bindable private var coordinator: IslandCoordinator
+    @Bindable private var displayContext: IslandDisplayContext
     private let openSettings: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(coordinator: IslandCoordinator, openSettings: @escaping () -> Void) {
+    public init(
+        coordinator: IslandCoordinator,
+        displayContext: IslandDisplayContext,
+        openSettings: @escaping () -> Void
+    ) {
         self.coordinator = coordinator
+        self.displayContext = displayContext
         self.openSettings = openSettings
     }
 
@@ -22,9 +28,10 @@ public struct IslandRootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.black, in: RoundedRectangle(cornerRadius: coordinator.isExpanded ? 22 : 19))
+        .background(.black)
+        .clipShape(surfaceShape)
         .foregroundStyle(.white)
-        .contentShape(RoundedRectangle(cornerRadius: coordinator.isExpanded ? 22 : 19))
+        .contentShape(surfaceShape)
         .onHover { hovering in
             if hovering { coordinator.pointerEntered() }
             else { coordinator.pointerExited() }
@@ -38,9 +45,27 @@ public struct IslandRootView: View {
     }
 
     private var compactContent: some View {
-        coordinator.registry.selectedCard?.makeCompactView()
-            .padding(.horizontal, 14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Group {
+            if let card = coordinator.registry.selectedCard {
+                if let physicalNotchSize = displayContext.physicalNotchSize {
+                    HStack(spacing: 0) {
+                        card.makeCompactLeadingView()
+                            .frame(width: card.metrics.compactLeadingWidth, alignment: .trailing)
+                        Color.clear
+                            .frame(width: physicalNotchSize.width)
+                        card.makeCompactTrailingView()
+                            .frame(width: card.metrics.compactTrailingWidth, alignment: .leading)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        card.makeCompactLeadingView()
+                        card.makeCompactTrailingView()
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var expandedContent: some View {
@@ -83,5 +108,15 @@ public struct IslandRootView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { coordinator.togglePin() }
         }
+    }
+
+    private var surfaceShape: TopAttachedRoundedRectangle {
+        let metrics = coordinator.isExpanded
+            ? IslandSurfaceMetrics.expanded
+            : IslandSurfaceMetrics.compact
+        return TopAttachedRoundedRectangle(
+            topCornerRadius: metrics.top,
+            bottomCornerRadius: metrics.bottom
+        )
     }
 }

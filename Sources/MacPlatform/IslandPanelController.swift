@@ -9,6 +9,7 @@ public final class IslandPanelController {
     private let panel: PeekerPanel
     private let hostingController: NSHostingController<AnyView>
     private let coordinator: IslandCoordinator
+    private let displayContext: IslandDisplayContext
     private let screens: ScreenTopologyService
     private var targetScreenID: String?
     private let didFallbackScreen: (String) -> Void
@@ -18,12 +19,14 @@ public final class IslandPanelController {
 
     public init(
         coordinator: IslandCoordinator,
+        displayContext: IslandDisplayContext,
         rootView: AnyView,
         screens: ScreenTopologyService,
         targetScreenID: String?,
         didFallbackScreen: @escaping (String) -> Void
     ) {
         self.coordinator = coordinator
+        self.displayContext = displayContext
         self.screens = screens
         self.targetScreenID = targetScreenID
         self.didFallbackScreen = didFallbackScreen
@@ -115,10 +118,6 @@ public final class IslandPanelController {
 
     private func updateFrame(animated: Bool) {
         guard let selected = coordinator.registry.selectedCard else { return }
-        let requested = coordinator.isExpanded
-            ? CGSize(width: selected.metrics.expandedWidth, height: selected.metrics.expandedHeight)
-            : CGSize(width: selected.metrics.compactWidth, height: selected.metrics.compactHeight)
-
         let requestedScreen = screens.screen(withStableID: targetScreenID)
         let screen = requestedScreen ?? NSScreen.main ?? NSScreen.screens.first
         guard let screen else { return }
@@ -127,11 +126,24 @@ public final class IslandPanelController {
             targetScreenID = fallbackID
             didFallbackScreen(fallbackID)
         }
+        let auxiliaryTopLeftWidth = screen.auxiliaryTopLeftArea?.width
+        let auxiliaryTopRightWidth = screen.auxiliaryTopRightArea?.width
+        let physicalNotchSize = IslandPanelGeometry.physicalNotchSize(
+            screenWidth: screen.frame.width,
+            safeTopInset: screen.safeAreaInsets.top,
+            auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,
+            auxiliaryTopRightWidth: auxiliaryTopRightWidth
+        )
+        displayContext.updatePhysicalNotchSize(physicalNotchSize)
+        let requested = coordinator.isExpanded
+            ? CGSize(width: selected.metrics.expandedWidth, height: selected.metrics.expandedHeight)
+            : selected.metrics.compactSize(physicalNotchSize: physicalNotchSize)
         let frame = IslandPanelGeometry.frame(
             requestedSize: requested,
             screenFrame: screen.frame,
             safeTopInset: screen.safeAreaInsets.top,
-            margin: 16
+            auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,
+            auxiliaryTopRightWidth: auxiliaryTopRightWidth
         )
         let duration = IslandPanelAnimation.duration(
             requested: animated,

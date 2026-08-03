@@ -64,10 +64,13 @@ public enum PusherFeatureFactory {
             metrics: FunctionCardMetrics(
                 compactWidth: 300,
                 compactHeight: 38,
+                compactLeadingWidth: 90,
+                compactTrailingWidth: 150,
                 expandedWidth: 920,
                 expandedHeight: 480
             ),
-            makeCompactView: { AnyView(PusherCompactView(store: store)) },
+            makeCompactLeadingView: { AnyView(PusherCompactLeadingView(store: store)) },
+            makeCompactTrailingView: { AnyView(PusherCompactTrailingView(store: store)) },
             makeExpandedView: {
                 AnyView(
                     PusherExpandedView(
@@ -83,20 +86,30 @@ public enum PusherFeatureFactory {
     }
 }
 
-private struct PusherCompactView: View {
+private struct PusherCompactLeadingView: View {
     @Bindable var store: PusherStore
 
     var body: some View {
         let summary = store.board?.summary ?? PusherSummary(planned: 0, processing: 0, done: 0)
-        HStack(spacing: 12) {
-            Label("\(summary.planned)", systemImage: "circle.dashed").foregroundStyle(.green)
-            Text("|").foregroundStyle(.tertiary)
+        Label("\(summary.planned)", systemImage: "circle.dashed")
+            .foregroundStyle(.green)
+            .monospacedDigit()
+            .accessibilityLabel("计划 \(summary.planned)")
+    }
+}
+
+private struct PusherCompactTrailingView: View {
+    @Bindable var store: PusherStore
+
+    var body: some View {
+        let summary = store.board?.summary ?? PusherSummary(planned: 0, processing: 0, done: 0)
+        HStack(spacing: 8) {
             Label("\(summary.processing)", systemImage: "arrow.forward.circle").foregroundStyle(.blue)
             Text("|").foregroundStyle(.tertiary)
             Label("\(summary.done)", systemImage: "checkmark.circle.fill").foregroundStyle(.red)
         }
         .monospacedDigit()
-        .accessibilityLabel("计划 \(summary.planned)，推进 \(summary.processing)，完成 \(summary.done)")
+        .accessibilityLabel("推进 \(summary.processing)，完成 \(summary.done)")
     }
 }
 

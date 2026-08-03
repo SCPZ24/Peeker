@@ -77,10 +77,13 @@ final class IslandStateMachineTests: XCTestCase {
             metrics: FunctionCardMetrics(
                 compactWidth: 140,
                 compactHeight: 38,
+                compactLeadingWidth: 50,
+                compactTrailingWidth: 50,
                 expandedWidth: 600,
                 expandedHeight: 400
             ),
-            makeCompactView: { AnyView(EmptyView()) },
+            makeCompactLeadingView: { AnyView(EmptyView()) },
+            makeCompactTrailingView: { AnyView(EmptyView()) },
             makeExpandedView: { AnyView(EmptyView()) },
             makeSettingsView: { AnyView(EmptyView()) }
         )

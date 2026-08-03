@@ -9,19 +9,21 @@ final class IslandPanelGeometryTests: XCTestCase {
             requestedSize: CGSize(width: 340, height: 38),
             screenFrame: screenFrame,
             safeTopInset: 32,
-            margin: 16
+            auxiliaryTopLeftWidth: 610,
+            auxiliaryTopRightWidth: 610
         )
         let expanded = IslandPanelGeometry.frame(
             requestedSize: CGSize(width: 760, height: 420),
             screenFrame: screenFrame,
             safeTopInset: 32,
-            margin: 16
+            auxiliaryTopLeftWidth: 610,
+            auxiliaryTopRightWidth: 610
         )
 
         XCTAssertEqual(compact.midX, -880)
         XCTAssertEqual(expanded.midX, -880)
-        XCTAssertEqual(compact.maxY, 1_004)
-        XCTAssertEqual(expanded.maxY, 1_004)
+        XCTAssertEqual(compact.maxY, 1_020)
+        XCTAssertEqual(expanded.maxY, 1_020)
     }
 
     func testAnimationPolicyDisablesMotionForInitialDisplayAndReduceMotion() {
@@ -77,24 +79,67 @@ final class IslandPanelGeometryTests: XCTestCase {
             requestedSize: CGSize(width: 920, height: 480),
             screenFrame: CGRect(x: 100, y: 40, width: 800, height: 600),
             safeTopInset: 28,
-            margin: 16
+            auxiliaryTopLeftWidth: 280,
+            auxiliaryTopRightWidth: 280
         )
 
         XCTAssertEqual(frame.width, 768)
         XCTAssertEqual(frame.midX, 500)
-        XCTAssertEqual(frame.maxY, 624)
+        XCTAssertEqual(frame.maxY, 640)
     }
 
-    func testCompactPanelKeepsRequestedSizeWhenItFits() {
+    func testNonNotchedCompactPanelKeepsRequestedSizeWhenItFits() {
         let frame = IslandPanelGeometry.frame(
             requestedSize: CGSize(width: 340, height: 38),
             screenFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
             safeTopInset: 0,
-            margin: 16
+            auxiliaryTopLeftWidth: nil,
+            auxiliaryTopRightWidth: nil
         )
 
         XCTAssertEqual(frame.size, CGSize(width: 340, height: 38))
         XCTAssertEqual(frame.minX, 550)
-        XCTAssertEqual(frame.maxY, 884)
+        XCTAssertEqual(frame.maxY, 900)
+    }
+
+    func testPhysicalNotchExpandsSmallRequestToCoverCameraRegion() {
+        let frame = IslandPanelGeometry.frame(
+            requestedSize: CGSize(width: 180, height: 24),
+            screenFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
+            safeTopInset: 32,
+            auxiliaryTopLeftWidth: 610,
+            auxiliaryTopRightWidth: 610
+        )
+
+        XCTAssertEqual(frame.size, CGSize(width: 224, height: 32))
+        XCTAssertEqual(frame.midX, 720)
+        XCTAssertEqual(frame.maxY, 900)
+    }
+
+    func testMissingAuxiliaryAreasKeepsRequestedWidthButStillCoversNotchHeight() {
+        let frame = IslandPanelGeometry.frame(
+            requestedSize: CGSize(width: 300, height: 24),
+            screenFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
+            safeTopInset: 34,
+            auxiliaryTopLeftWidth: nil,
+            auxiliaryTopRightWidth: nil
+        )
+
+        XCTAssertEqual(frame.size, CGSize(width: 300, height: 34))
+        XCTAssertEqual(frame.maxY, 900)
+    }
+
+    func testPanelClampsHeightAndLeavesBottomMargin() {
+        let frame = IslandPanelGeometry.frame(
+            requestedSize: CGSize(width: 600, height: 900),
+            screenFrame: CGRect(x: 100, y: 40, width: 800, height: 600),
+            safeTopInset: 0,
+            auxiliaryTopLeftWidth: nil,
+            auxiliaryTopRightWidth: nil
+        )
+
+        XCTAssertEqual(frame.height, 584)
+        XCTAssertEqual(frame.maxY, 640)
+        XCTAssertEqual(frame.minY, 56)
     }
 }

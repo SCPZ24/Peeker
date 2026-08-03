@@ -105,6 +105,7 @@ final class AppRuntime {
             )
             islandCoordinator = IslandCoordinator(registry: registry)
             coordinatorBox.value = islandCoordinator
+            let islandDisplayContext = IslandDisplayContext()
             settingsStore = SettingsStore(
                 preferences: preferences,
                 screens: screens,
@@ -114,12 +115,16 @@ final class AppRuntime {
             )
 
             let rootView = AnyView(
-                IslandRootView(coordinator: islandCoordinator) {
+                IslandRootView(
+                    coordinator: islandCoordinator,
+                    displayContext: islandDisplayContext
+                ) {
                     AppRuntime.shared.openSettings()
                 }
             )
             panelController = IslandPanelController(
                 coordinator: islandCoordinator,
+                displayContext: islandDisplayContext,
                 rootView: rootView,
                 screens: screens,
                 targetScreenID: preferences.targetScreenID,
