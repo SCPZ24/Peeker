@@ -40,6 +40,11 @@ struct SettingsRootView: View {
                 .frame(minWidth: 560, minHeight: 420)
         }
         .frame(width: 760, height: 520)
+        .background {
+            SettingsWindowAccessor { window in
+                runtime.registerSettingsWindow(window)
+            }
+        }
         .task { await runtime.settingsStore.load() }
     }
 
@@ -56,6 +61,41 @@ struct SettingsRootView: View {
             runtime.registry.registrations.first(where: { $0.id == .pusher })?.makeSettingsView()
         case .about:
             AboutSettingsView(store: runtime.settingsStore)
+        }
+    }
+}
+
+private struct SettingsWindowAccessor: NSViewRepresentable {
+    let onWindowAvailable: @MainActor (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> WindowReportingView {
+        WindowReportingView(onWindowAvailable: onWindowAvailable)
+    }
+
+    func updateNSView(_ nsView: WindowReportingView, context: Context) {
+        nsView.onWindowAvailable = onWindowAvailable
+    }
+}
+
+private final class WindowReportingView: NSView {
+    var onWindowAvailable: @MainActor (NSWindow) -> Void
+
+    init(onWindowAvailable: @escaping @MainActor (NSWindow) -> Void) {
+        self.onWindowAvailable = onWindowAvailable
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window else { return }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            self.onWindowAvailable(window)
         }
     }
 }

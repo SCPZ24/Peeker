@@ -24,6 +24,7 @@ final class AppRuntime {
     let settingsStore: SettingsStore
     private(set) var panelController: IslandPanelController!
     private let eventHub: TemporalEventHub
+    private let settingsWindowPositioner = SettingsWindowPositioner()
 
     private init() {
         preferences = AppPreferences()
@@ -150,6 +151,10 @@ final class AppRuntime {
         Task { await eventHub.wake() }
     }
 
+    func registerSettingsWindow(_ window: NSWindow) {
+        settingsWindowPositioner.register(window)
+    }
+
     func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
         guard let applicationMenu = NSApp.mainMenu?.items.first?.submenu,
@@ -160,6 +165,9 @@ final class AppRuntime {
             return
         }
         applicationMenu.performActionForItem(at: settingsIndex)
+        DispatchQueue.main.async { [weak self] in
+            self?.settingsWindowPositioner.repositionAndBringForward()
+        }
     }
 }
 

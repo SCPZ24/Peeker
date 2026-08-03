@@ -80,23 +80,27 @@ private struct TimerCompactView: View {
                     targetSeconds: task.targetSeconds,
                     remainingSeconds: remainingSeconds
                 )
-                VStack(spacing: 3) {
-                    HStack(spacing: 8) {
-                        Circle().fill(Color(hex: task.colorHex)).frame(width: 8, height: 8)
-                        Text(task.name)
-                            .lineLimit(1)
-                            .foregroundStyle(TimerIslandAppearance.primaryText)
-                        Spacer(minLength: 6)
-                        if task.status == .completed {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        } else {
-                            Text(formatDuration(remainingSeconds))
-                                .monospacedDigit()
-                                .foregroundStyle(TimerIslandAppearance.secondaryText)
-                        }
-                    }
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(Color(hex: task.colorHex))
+                        .frame(width: 8, height: 8)
+                    Text(task.name)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(TimerIslandAppearance.primaryText)
+                        .layoutPriority(1)
                     TimerTaskProgressBar(ratio: progress.ratio, color: Color(hex: task.colorHex))
-                        .frame(height: 3)
+                        .frame(minWidth: 56, idealWidth: 92, maxWidth: 112)
+                        .frame(height: 4)
+                    if task.status == .completed {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Text(formatDuration(remainingSeconds))
+                            .monospacedDigit()
+                            .foregroundStyle(TimerIslandAppearance.secondaryText)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
                 }
             } else {
                 Label("Timer 尚未配置", systemImage: "timer")
@@ -174,42 +178,41 @@ private struct TimerTaskRow: View {
                 targetSeconds: task.targetSeconds,
                 remainingSeconds: remainingSeconds
             )
-            VStack(spacing: 8) {
-                HStack(spacing: 12) {
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(hex: task.colorHex))
-                        .frame(width: 6, height: 34)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(task.name)
-                            .font(.headline)
-                            .lineLimit(1)
-                            .foregroundStyle(TimerIslandAppearance.primaryText)
-                        Text(task.status == .completed ? "已完成" : formatDuration(remainingSeconds))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(
-                                task.status == .completed
-                                    ? Color.green
-                                    : TimerIslandAppearance.secondaryText
-                            )
-                    }
-                    Spacer()
-                    if task.status == .running {
-                        Button("暂停", systemImage: "pause.fill") {
-                            Task { try? await store.pause() }
-                        }
-                        .labelStyle(.iconOnly)
-                    } else if task.status == .completed {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    } else {
-                        Button("开始", systemImage: "play.fill") {
-                            Task { await store.start(taskID: task.id) }
-                        }
-                        .labelStyle(.iconOnly)
-                        .disabled(store.dayState?.activeSession != nil)
-                    }
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color(hex: task.colorHex))
+                    .frame(width: 6, height: 34)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(task.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .foregroundStyle(TimerIslandAppearance.primaryText)
+                    Text(task.status == .completed ? "已完成" : formatDuration(remainingSeconds))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(
+                            task.status == .completed
+                                ? Color.green
+                                : TimerIslandAppearance.secondaryText
+                        )
                 }
+                .frame(width: 170, alignment: .leading)
                 TimerTaskProgressBar(ratio: progress.ratio, color: Color(hex: task.colorHex))
+                    .frame(minWidth: 80, maxWidth: .infinity)
                     .frame(height: 4)
+                if task.status == .running {
+                    Button("暂停", systemImage: "pause.fill") {
+                        Task { try? await store.pause() }
+                    }
+                    .labelStyle(.iconOnly)
+                } else if task.status == .completed {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                } else {
+                    Button("开始", systemImage: "play.fill") {
+                        Task { await store.start(taskID: task.id) }
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(store.dayState?.activeSession != nil)
+                }
             }
             .padding(10)
             .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
