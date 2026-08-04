@@ -28,7 +28,12 @@ fi
 
 rm -f "$ARCHIVE" "$ARCHIVE.sha256"
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$ROOT_DIR/dist/Peeker.app" "$ARCHIVE"
-/usr/bin/shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+ARCHIVE_DIRECTORY="$(dirname "$ARCHIVE")"
+ARCHIVE_FILENAME="$(basename "$ARCHIVE")"
+(
+  cd "$ARCHIVE_DIRECTORY"
+  /usr/bin/shasum -a 256 "$ARCHIVE_FILENAME" > "$ARCHIVE_FILENAME.sha256"
+)
 
 echo "Local archive: $ARCHIVE"
 echo "SHA-256: $(/usr/bin/awk '{print $1}' "$ARCHIVE.sha256")"
