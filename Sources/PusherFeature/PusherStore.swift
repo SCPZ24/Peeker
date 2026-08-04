@@ -3,6 +3,12 @@ import Observation
 import SwiftUI
 import PeekerCore
 
+enum PusherMovePreparation {
+    case rejected
+    case unchanged
+    case started(PusherMoveTransaction)
+}
+
 @MainActor
 @Observable
 public final class PusherStore {
@@ -149,14 +155,14 @@ public final class PusherStore {
         taskID: UUID,
         to status: PusherStatus,
         insertionIndex: Int
-    ) -> PusherMoveTransaction? {
-        guard let current = board, acquireBoardMutation() else { return nil }
+    ) -> PusherMovePreparation {
+        guard let current = board, acquireBoardMutation() else { return .rejected }
         do {
             var moved = current
             try moved.move(taskID: taskID, to: status, at: insertionIndex)
             guard !moved.hasSameTaskPlacement(as: current) else {
                 isBoardMutationPending = false
-                return nil
+                return .unchanged
             }
 
             let transaction = PusherMoveTransaction(before: current, after: moved)
@@ -164,10 +170,10 @@ public final class PusherStore {
             isMovePending = true
             pendingMoveID = transaction.id
             errorMessage = nil
-            return transaction
+            return .started(transaction)
         } catch {
             isBoardMutationPending = false
-            return nil
+            return .rejected
         }
     }
 
@@ -196,12 +202,18 @@ public final class PusherStore {
     }
 
     public func move(taskID: UUID, to status: PusherStatus, at position: Int) async -> Bool {
-        guard let transaction = beginMove(
+        switch beginMove(
             taskID: taskID,
             to: status,
             insertionIndex: position
-        ) else { return false }
-        return await persistMove(transaction)
+        ) {
+        case .rejected:
+            return false
+        case .unchanged:
+            return true
+        case let .started(transaction):
+            return await persistMove(transaction)
+        }
     }
 
     public func updateRefreshTime(_ refreshTime: RefreshTime) async {

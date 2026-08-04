@@ -9,7 +9,7 @@ final class PusherStoreMoveTests: XCTestCase {
         let fixture = try makeFixture()
         await fixture.store.load()
 
-        let transaction = try XCTUnwrap(
+        let transaction = try startedTransaction(
             fixture.store.beginMove(taskID: fixture.first.id, to: .processing, insertionIndex: 0)
         )
 
@@ -32,7 +32,7 @@ final class PusherStoreMoveTests: XCTestCase {
         await fixture.store.load()
         let original = try XCTUnwrap(fixture.store.board)
         let originalSummary = original.compactSummary
-        let transaction = try XCTUnwrap(
+        let transaction = try startedTransaction(
             fixture.store.beginMove(taskID: fixture.first.id, to: .processing, insertionIndex: 0)
         )
 
@@ -48,7 +48,7 @@ final class PusherStoreMoveTests: XCTestCase {
         let fixture = try makeFixture(reorderError: TestMoveError.persistenceFailed)
         await fixture.store.load()
         let original = try XCTUnwrap(fixture.store.board)
-        let transaction = try XCTUnwrap(
+        let transaction = try startedTransaction(
             fixture.store.beginMove(taskID: fixture.first.id, to: .processing, insertionIndex: 0)
         )
 
@@ -64,7 +64,7 @@ final class PusherStoreMoveTests: XCTestCase {
         let fixture = try makeFixture(reorderError: TestMoveError.persistenceFailed)
         await fixture.store.load()
         let originalDay = try XCTUnwrap(fixture.store.board?.businessDay)
-        let transaction = try XCTUnwrap(
+        let transaction = try startedTransaction(
             fixture.store.beginMove(taskID: fixture.first.id, to: .processing, insertionIndex: 0)
         )
         fixture.clock.set(originalDay.end.addingTimeInterval(1))
@@ -81,7 +81,7 @@ final class PusherStoreMoveTests: XCTestCase {
         let fixture = try makeFixture(suspendSnapshotSave: true)
         await fixture.store.load()
         let originalDay = try XCTUnwrap(fixture.store.board?.businessDay)
-        let transaction = try XCTUnwrap(
+        let transaction = try startedTransaction(
             fixture.store.beginMove(taskID: fixture.first.id, to: .processing, insertionIndex: 0)
         )
         fixture.clock.set(originalDay.end.addingTimeInterval(1))
@@ -91,9 +91,11 @@ final class PusherStoreMoveTests: XCTestCase {
         await fixture.repository.waitForSnapshotSaveToStart()
 
         XCTAssertTrue(fixture.store.isMovePending)
-        XCTAssertNil(
-            fixture.store.beginMove(taskID: fixture.second.id, to: .done, insertionIndex: 0)
-        )
+        guard case .rejected = fixture.store.beginMove(
+            taskID: fixture.second.id,
+            to: .done,
+            insertionIndex: 0
+        ) else { return XCTFail("pending move should be rejected") }
 
         await fixture.repository.releaseSnapshotSave()
         let persistenceSucceeded = await persistence.value
@@ -106,11 +108,15 @@ final class PusherStoreMoveTests: XCTestCase {
         let fixture = try makeFixture()
         await fixture.store.load()
         let original = try XCTUnwrap(fixture.store.board)
-        let transaction = try XCTUnwrap(
+        let transaction = try startedTransaction(
             fixture.store.beginMove(taskID: fixture.first.id, to: .processing, insertionIndex: 0)
         )
 
-        XCTAssertNil(fixture.store.beginMove(taskID: fixture.second.id, to: .done, insertionIndex: 0))
+        guard case .rejected = fixture.store.beginMove(
+            taskID: fixture.second.id,
+            to: .done,
+            insertionIndex: 0
+        ) else { return XCTFail("pending move should be rejected") }
         XCTAssertEqual(fixture.store.board?.tasks(in: .processing).map(\.id), [fixture.first.id])
 
         await fixture.store.persistMove(PusherMoveTransaction(before: original, after: original))
@@ -126,16 +132,43 @@ final class PusherStoreMoveTests: XCTestCase {
         let fixture = try makeFixture(includeProcessingTask: true)
         await fixture.store.load()
 
-        let transaction = fixture.store.beginMove(
+        let preparation = fixture.store.beginMove(
             taskID: fixture.first.id,
             to: .planned,
             insertionIndex: 1
         )
 
-        XCTAssertNil(transaction)
+        guard case .unchanged = preparation else { return XCTFail("same slot should be unchanged") }
         XCTAssertFalse(fixture.store.isMovePending)
         let reorderCount = await fixture.repository.reorderCount()
         XCTAssertEqual(reorderCount, 0)
+    }
+
+    func testInvalidMoveIsRejectedWithoutChangingBoard() async throws {
+        let fixture = try makeFixture()
+        await fixture.store.load()
+        let original = fixture.store.board
+
+        guard case .rejected = fixture.store.beginMove(
+            taskID: UUID(),
+            to: .done,
+            insertionIndex: 0
+        ) else { return XCTFail("unknown task should be rejected") }
+
+        XCTAssertEqual(fixture.store.board, original)
+        XCTAssertFalse(fixture.store.isMovePending)
+    }
+
+    private func startedTransaction(
+        _ preparation: PusherMovePreparation,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> PusherMoveTransaction {
+        guard case let .started(transaction) = preparation else {
+            XCTFail("expected started move", file: file, line: line)
+            throw TestMoveError.persistenceFailed
+        }
+        return transaction
     }
 
     private func makeFixture(

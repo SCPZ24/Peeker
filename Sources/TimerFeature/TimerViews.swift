@@ -38,6 +38,15 @@ public struct TimerFeatureDependencies {
 
 @MainActor
 public enum TimerFeatureFactory {
+    static let metrics = FunctionCardMetrics(
+        compactWidth: 260,
+        compactHeight: 32,
+        compactLeadingWidth: 144,
+        compactTrailingWidth: 72,
+        expandedWidth: 800,
+        expandedHeight: 460 * 5 / 7
+    )
+
     public static func make(dependencies: TimerFeatureDependencies) throws -> FunctionCardRegistration {
         let store = TimerStore(
             repository: dependencies.repository,
@@ -56,14 +65,7 @@ public enum TimerFeatureFactory {
             name: "Timer",
             systemImage: "timer",
             defaultOrder: 0,
-            metrics: FunctionCardMetrics(
-                compactWidth: 260,
-                compactHeight: 32,
-                compactLeadingWidth: 144,
-                compactTrailingWidth: 72,
-                expandedWidth: 800,
-                expandedHeight: 460
-            ),
+            metrics: metrics,
             makeCompactLeadingView: { AnyView(TimerCompactLeadingView(store: store)) },
             makeCompactTrailingView: { AnyView(TimerCompactTrailingView(store: store)) },
             makeExpandedView: { AnyView(TimerExpandedView(store: store)) },

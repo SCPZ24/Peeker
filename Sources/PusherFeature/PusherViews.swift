@@ -44,6 +44,15 @@ public struct PusherFeatureDependencies {
 
 @MainActor
 public enum PusherFeatureFactory {
+    static let metrics = FunctionCardMetrics(
+        compactWidth: 340,
+        compactHeight: 32,
+        compactLeadingWidth: 128,
+        compactTrailingWidth: 184,
+        expandedWidth: 960,
+        expandedHeight: 520 * 5 / 7
+    )
+
     public static func make(dependencies: PusherFeatureDependencies) throws -> FunctionCardRegistration {
         let store = PusherStore(
             repository: dependencies.repository,
@@ -61,14 +70,7 @@ public enum PusherFeatureFactory {
             name: "Pusher",
             systemImage: "rectangle.3.group.fill",
             defaultOrder: 1,
-            metrics: FunctionCardMetrics(
-                compactWidth: 340,
-                compactHeight: 32,
-                compactLeadingWidth: 128,
-                compactTrailingWidth: 184,
-                expandedWidth: 960,
-                expandedHeight: 520
-            ),
+            metrics: metrics,
             makeCompactLeadingView: { AnyView(PusherCompactLeadingView(store: store)) },
             makeCompactTrailingView: { AnyView(PusherCompactTrailingView(store: store)) },
             makeExpandedView: {
@@ -167,31 +169,49 @@ private struct PusherExpandedView: View {
     let setDragging: @MainActor (Bool) -> Void
     let setEditingText: @MainActor (Bool) -> Void
     @State private var popover: PusherPopover?
+    @State private var dragSessionNonce = UUID()
+    @State private var dragLayoutModel = PusherDragLayoutModel()
 
     var body: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 10) {
-                PusherColumn(
-                    title: "Planned",
-                    status: .planned,
-                    tasks: store.board?.tasks(in: .planned) ?? [],
-                    store: store,
-                    edit: { popover = .edit($0) }
-                )
-                PusherColumn(
-                    title: "Processing",
-                    status: .processing,
-                    tasks: store.board?.tasks(in: .processing) ?? [],
-                    store: store,
-                    edit: { popover = .edit($0) }
-                )
-                PusherColumn(
-                    title: "Done",
-                    status: .done,
-                    tasks: store.board?.tasks(in: .done) ?? [],
-                    store: store,
-                    edit: { popover = .edit($0) }
-                )
+            PusherAppKitDropContainer(
+                layoutModel: dragLayoutModel,
+                sessionNonce: dragSessionNonce,
+                board: store.board,
+                isEnabled: !store.isMovePending,
+                performDrop: performDrop
+            ) {
+                HStack(spacing: 10) {
+                    PusherColumn(
+                        title: "Planned",
+                        status: .planned,
+                        tasks: store.board?.tasks(in: .planned) ?? [],
+                        store: store,
+                        dragSessionNonce: dragSessionNonce,
+                        dragLayoutModel: dragLayoutModel,
+                        edit: { popover = .edit($0) }
+                    )
+                    PusherColumn(
+                        title: "Processing",
+                        status: .processing,
+                        tasks: store.board?.tasks(in: .processing) ?? [],
+                        store: store,
+                        dragSessionNonce: dragSessionNonce,
+                        dragLayoutModel: dragLayoutModel,
+                        edit: { popover = .edit($0) }
+                    )
+                    PusherColumn(
+                        title: "Done",
+                        status: .done,
+                        tasks: store.board?.tasks(in: .done) ?? [],
+                        store: store,
+                        dragSessionNonce: dragSessionNonce,
+                        dragLayoutModel: dragLayoutModel,
+                        edit: { popover = .edit($0) }
+                    )
+                }
+                .coordinateSpace(name: PusherDragLayoutModel.coordinateSpaceName)
+                .onDragSessionUpdated(handleDragSession)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -221,18 +241,12 @@ private struct PusherExpandedView: View {
                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
         }
-        .onDragSessionUpdated { session in
-            switch session.phase {
-            case .initial, .active:
-                setDragging(true)
-            case .ended, .dataTransferCompleted:
-                setDragging(false)
-            @unknown default:
-                setDragging(false)
-            }
-        }
         .onChange(of: popover?.id) { _, newValue in
             setPopoverPresented(newValue != nil)
+        }
+        .onDisappear {
+            dragLayoutModel.clearActiveTarget()
+            setDragging(false)
         }
         .popover(item: $popover, arrowEdge: .bottom) { item in
             Group {
@@ -272,6 +286,39 @@ private struct PusherExpandedView: View {
             .pusherPopoverAppearance()
         }
     }
+
+    private func handleDragSession(_ session: DragSession) {
+        switch session.phase {
+        case .initial, .active:
+            setDragging(true)
+        case .ended, .dataTransferCompleted:
+            dragLayoutModel.clearActiveTarget()
+            setDragging(false)
+        @unknown default:
+            dragLayoutModel.clearActiveTarget()
+            setDragging(false)
+        }
+    }
+
+    private func performDrop(_ target: PusherResolvedDropTarget) -> Bool {
+        var preparation = PusherMovePreparation.rejected
+        withAnimation(.easeInOut(duration: 0.12)) {
+            preparation = store.beginMove(
+                taskID: target.taskID,
+                to: target.status,
+                insertionIndex: target.insertionIndex
+            )
+        }
+        switch preparation {
+        case .rejected:
+            return false
+        case .unchanged:
+            return true
+        case let .started(transaction):
+            Task { await store.persistMove(transaction) }
+            return true
+        }
+    }
 }
 
 private struct PusherColumn: View {
@@ -279,8 +326,11 @@ private struct PusherColumn: View {
     let status: PusherStatus
     let tasks: [PusherTask]
     @Bindable var store: PusherStore
+    let dragSessionNonce: UUID
+    let dragLayoutModel: PusherDragLayoutModel
     let edit: (PusherTask) -> Void
     @State private var taskFrames: [UUID: CGRect] = [:]
+    @State private var columnFrame = CGRect.zero
 
     private var coordinateSpaceName: String { "pusher-column-\(status.rawValue)" }
 
@@ -314,15 +364,16 @@ private struct PusherColumn: View {
                                 }
                                 .allowsHitTesting(!store.isMovePending)
                                 .draggable(
-                                    PusherDragPayload(
-                                        taskID: task.id,
-                                        businessDayID: task.businessDayID
-                                    )
+                                    PusherDragEnvelope(
+                                        sessionNonce: dragSessionNonce,
+                                        businessDayStart: task.businessDayID.startAtMilliseconds,
+                                        taskID: task.id
+                                    ).rawValue
                                 ) {
                                     PusherTaskCard(task: task, edit: {})
                                         .frame(width: 180)
                                 }
-                                .dragConfiguration(DragConfiguration(allowMove: true))
+                                .dragConfiguration(moveOnlyDragConfiguration)
                         }
                     }
                 }
@@ -331,45 +382,73 @@ private struct PusherColumn: View {
         .padding(10)
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
         .coordinateSpace(name: coordinateSpaceName)
-        .onPreferenceChange(PusherTaskFramePreferenceKey.self) { taskFrames = $0 }
-        .dropDestination(
-            for: PusherDragPayload.self,
-            isEnabled: !store.isMovePending
-        ) { values, session in
-            guard let board = store.board,
-                  let payload = values.first,
-                  let taskID = payload.taskID(in: board) else { return }
-            let rows = tasks.enumerated().compactMap { index, task -> PusherDropRow? in
-                guard let frame = taskFrames[task.id] else { return nil }
-                return PusherDropRow(taskIndex: index, frame: frame)
+        .onPreferenceChange(PusherTaskFramePreferenceKey.self) { frames in
+            taskFrames = frames
+            publishGeometry()
+        }
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named(PusherDragLayoutModel.coordinateSpaceName))
+        } action: { frame in
+            columnFrame = frame
+            publishGeometry()
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(isDropTargeted ? Color.blue : .clear, lineWidth: 2)
+                .allowsHitTesting(false)
+        }
+        .overlay(alignment: .topLeading) {
+            if let target = activeDropTarget {
+                Rectangle()
+                    .fill(Color.blue)
+                    .frame(width: max(0, columnFrame.width - 20), height: 2)
+                    .offset(
+                        x: 10,
+                        y: max(0, target.landingFrame.minY - columnFrame.minY)
+                    )
+                    .allowsHitTesting(false)
             }
-            let insertionIndex = PusherDropPlacement.insertionIndex(
-                locationY: session.location.y,
+        }
+        .accessibilityValue(accessibilityDropValue)
+    }
+
+    private var activeDropTarget: PusherResolvedDropTarget? {
+        guard dragLayoutModel.activeTarget?.status == status else { return nil }
+        return dragLayoutModel.activeTarget
+    }
+
+    private var moveOnlyDragConfiguration: DragConfiguration {
+        DragConfiguration(
+            operationsWithinApp: .init(
+                allowCopy: false,
+                allowMove: true,
+                allowDelete: false
+            ),
+            operationsOutsideApp: .init(allowCopy: false)
+        )
+    }
+
+    private var isDropTargeted: Bool { activeDropTarget != nil }
+
+    private var accessibilityDropValue: String {
+        guard let activeDropTarget else { return "" }
+        return "将移动到 \(title)，第 \(activeDropTarget.insertionIndex + 1) 个位置"
+    }
+
+    private func publishGeometry() {
+        guard !columnFrame.isEmpty else { return }
+        let rows = tasks.enumerated().compactMap { index, task -> PusherDropRow? in
+            guard let frame = taskFrames[task.id] else { return nil }
+            return PusherDropRow(taskIndex: index, frame: frame)
+        }
+        dragLayoutModel.updateColumn(
+            PusherDropColumnGeometry(
+                status: status,
+                frame: columnFrame,
                 rows: rows,
                 taskCount: tasks.count
             )
-            var transaction: PusherMoveTransaction?
-            withAnimation(.easeInOut(duration: 0.12)) {
-                transaction = store.beginMove(
-                    taskID: taskID,
-                    to: status,
-                    insertionIndex: insertionIndex
-                )
-            }
-            if let transaction {
-                Task { await store.persistMove(transaction) }
-            }
-        }
-        .dropConfiguration { session in
-            guard !store.isMovePending,
-                  session.localSession != nil,
-                  session.itemsCount == 1 else {
-                return DropConfiguration(operation: .forbidden)
-            }
-            var configuration = DropConfiguration(operation: .move)
-            configuration.acceptedItemCount = 1
-            return configuration
-        }
+        )
     }
 }
 
