@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-1.0.0}"
+VERSION="${1:-1.0.1}"
 CASK="$($ROOT_DIR/scripts/render-cask.sh "$VERSION")"
 export HOMEBREW_CACHE="$ROOT_DIR/.build/homebrew-cache"
 export HOMEBREW_TEMP="$ROOT_DIR/.build/homebrew-temp"
