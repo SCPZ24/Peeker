@@ -61,14 +61,22 @@ final class SettingsWindowPositionerTests: XCTestCase {
         XCTAssertEqual(window.frame.midY, 360)
     }
 
-    func testRepositionRestoresRegisteredWindowAfterItMoves() {
+    func testRepositionRestoresRegisteredWindowAfterItMoves() async throws {
         let window = makeWindow()
-        let visibleFrame = try! XCTUnwrap(NSScreen.main?.visibleFrame)
+        guard let visibleFrame = NSScreen.main?.visibleFrame else {
+            throw XCTSkip("Requires an active macOS display")
+        }
         let positioner = SettingsWindowPositioner { _ in visibleFrame }
         positioner.register(window)
         window.setFrameOrigin(CGPoint(x: 200, y: 300))
 
         positioner.repositionAndBringForward()
+
+        let mainQueueDrained = expectation(description: "Window activation reapplied the final settings frame")
+        DispatchQueue.main.async {
+            mainQueueDrained.fulfill()
+        }
+        await fulfillment(of: [mainQueueDrained], timeout: 1)
 
         XCTAssertEqual(window.frame.midX, visibleFrame.midX, accuracy: 0.5)
         XCTAssertEqual(
@@ -78,9 +86,11 @@ final class SettingsWindowPositionerTests: XCTestCase {
         )
     }
 
-    func testBecomingKeyReappliesPositionAfterWindowRestoration() async {
+    func testBecomingKeyReappliesPositionAfterWindowRestoration() async throws {
         let window = makeWindow()
-        let visibleFrame = try! XCTUnwrap(NSScreen.main?.visibleFrame)
+        guard let visibleFrame = NSScreen.main?.visibleFrame else {
+            throw XCTSkip("Requires an active macOS display")
+        }
         let positioner = SettingsWindowPositioner { _ in visibleFrame }
         positioner.register(window)
         window.setFrameOrigin(CGPoint(x: 200, y: 300))

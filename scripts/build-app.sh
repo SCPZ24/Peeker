@@ -45,6 +45,7 @@ rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$CONTENTS/Resources"
 cp "$BIN_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS/Info.plist"
+"$ROOT_DIR/scripts/build-icon.sh" "$CONTENTS/Resources/Peeker.icns"
 chmod +x "$MACOS_DIR/$APP_NAME"
 
 SIGN_IDENTITY="${PEEKER_SIGN_IDENTITY:--}"

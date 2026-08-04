@@ -7,6 +7,7 @@ cask "peeker" do
   desc "Low-distraction timer and daily progress island"
   homepage "https://github.com/SCPZ24/Peeker"
 
+  depends_on arch: :arm64
   depends_on macos: :tahoe
 
   app "Peeker.app"
@@ -17,7 +18,12 @@ cask "peeker" do
   ]
 
   caveats <<~EOS
-    Peeker v1 is distributed without notarization. On first launch, macOS may
-    require you to allow the app in System Settings > Privacy & Security.
+    Peeker is ad-hoc signed and distributed without Apple notarization.
+    Peeker 使用 ad-hoc 签名，未经过 Apple 公证。
+
+    After the first blocked launch, open System Settings > Privacy & Security,
+    choose Open Anyway for Peeker, then confirm Open. Do not disable Gatekeeper.
+    首次启动被拦截后，请打开“系统设置 → 隐私与安全”，为 Peeker 选择
+    “仍要打开”，再确认“打开”。无需也不应关闭 Gatekeeper。
   EOS
 end

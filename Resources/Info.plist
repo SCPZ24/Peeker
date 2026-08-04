@@ -8,6 +8,8 @@
     <string>Peeker</string>
     <key>CFBundleIdentifier</key>
     <string>com.scpz24.Peeker</string>
+    <key>CFBundleIconFile</key>
+    <string>Peeker.icns</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

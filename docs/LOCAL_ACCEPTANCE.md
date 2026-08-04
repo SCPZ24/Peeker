@@ -1,6 +1,7 @@
 # Local acceptance
 
-Peeker stops at a local, unpublished build in this round.
+These checks validate the same application bundle used by GitHub Releases and
+the project Homebrew Tap. They do not publish or mutate remote state.
 
 ## Required checks
 
@@ -62,4 +63,5 @@ If `xcodebuild -version` reports that the active developer directory is Command 
 - Check all Spaces and full-screen applications.
 - Toggle the login item and compare the UI with macOS System Settings.
 
-No tag, push, pull request, GitHub Release or Homebrew Tap mutation is part of local acceptance.
+Local acceptance must finish before a tag, GitHub Release, or Homebrew Tap
+update is created. Follow `docs/RELEASING.md` for the remote publication steps.
