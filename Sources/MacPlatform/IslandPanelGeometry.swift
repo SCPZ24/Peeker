@@ -13,18 +13,36 @@ enum IslandPanelAnimation {
     }
 }
 
+struct IslandPanelTransitionEnvironment: Equatable {
+    let selectedCardID: String
+    let screenID: String
+    let screenFrame: CGRect
+    let safeTopInset: CGFloat
+    let auxiliaryTopLeftWidth: CGFloat?
+    let auxiliaryTopRightWidth: CGFloat?
+}
+
 struct IslandPanelTransitionState {
     private(set) var generation: UInt64 = 0
     private(set) var targetExpanded = false
+    private var finishedGeneration: UInt64?
 
     mutating func begin(targetExpanded: Bool) -> UInt64 {
         generation &+= 1
         self.targetExpanded = targetExpanded
+        finishedGeneration = nil
         return generation
     }
 
     func acceptsCompletion(generation: UInt64, targetExpanded: Bool) -> Bool {
         self.generation == generation && self.targetExpanded == targetExpanded
+    }
+
+    mutating func finish(generation: UInt64, targetExpanded: Bool) -> Bool {
+        guard acceptsCompletion(generation: generation, targetExpanded: targetExpanded),
+              finishedGeneration != generation else { return false }
+        finishedGeneration = generation
+        return true
     }
 }
 

@@ -4,6 +4,20 @@ import XCTest
 
 @MainActor
 final class IslandSurfaceTests: XCTestCase {
+    func testExpandedLogicalStateMakesOnlyExpandedContentInteractive() {
+        let policy = IslandContentInteractivity(isExpanded: true)
+
+        XCTAssertTrue(policy.expandedAllowsHitTesting)
+        XCTAssertFalse(policy.compactAllowsHitTesting)
+    }
+
+    func testCompactLogicalStateMakesOnlyCompactContentInteractive() {
+        let policy = IslandContentInteractivity(isExpanded: false)
+
+        XCTAssertFalse(policy.expandedAllowsHitTesting)
+        XCTAssertTrue(policy.compactAllowsHitTesting)
+    }
+
     func testDisplayContextCanMoveFromPhysicalNotchToNonNotchedScreen() {
         let context = IslandDisplayContext()
 
@@ -150,7 +164,7 @@ final class IslandSurfaceTests: XCTestCase {
         )
     }
 
-    func testPresentationSurfaceAndInteractiveLayerAreUpdatedIndependentlyFromTarget() {
+    func testPresentationSurfaceCanBeUpdatedIndependentlyFromTarget() {
         let context = IslandDisplayContext(
             compactSurfaceSize: CGSize(width: 497, height: 32),
             expandedSurfaceSize: CGSize(width: 800, height: 460)
@@ -161,10 +175,6 @@ final class IslandSurfaceTests: XCTestCase {
 
         XCTAssertEqual(context.expansionTarget, 1)
         XCTAssertEqual(context.presentationSurfaceSize, CGSize(width: 600, height: 180))
-        XCTAssertFalse(context.isExpandedContentInteractive)
-
-        context.setExpandedContentInteractive(true)
-        XCTAssertTrue(context.isExpandedContentInteractive)
     }
 
     func testSurfaceRadiiProduceSoftRectanglesInsteadOfCapsules() {

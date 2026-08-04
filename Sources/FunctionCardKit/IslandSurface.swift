@@ -2,6 +2,16 @@ import CoreGraphics
 import Observation
 import SwiftUI
 
+struct IslandContentInteractivity: Equatable {
+    let expandedAllowsHitTesting: Bool
+    let compactAllowsHitTesting: Bool
+
+    init(isExpanded: Bool) {
+        expandedAllowsHitTesting = isExpanded
+        compactAllowsHitTesting = !isExpanded
+    }
+}
+
 @MainActor
 @Observable
 public final class IslandDisplayContext {
@@ -10,21 +20,18 @@ public final class IslandDisplayContext {
     public private(set) var expandedSurfaceSize: CGSize
     public private(set) var expansionTarget: CGFloat
     public private(set) var presentationSurfaceSize: CGSize
-    public private(set) var isExpandedContentInteractive: Bool
 
     public init(
         physicalNotchSize: CGSize? = nil,
         compactSurfaceSize: CGSize = .zero,
         expandedSurfaceSize: CGSize = .zero,
         expansionTarget: CGFloat = 0,
-        presentationSurfaceSize: CGSize = .zero,
-        isExpandedContentInteractive: Bool = false
+        presentationSurfaceSize: CGSize = .zero
     ) {
         self.compactSurfaceSize = Self.normalizedSize(compactSurfaceSize)
         self.expandedSurfaceSize = Self.normalizedSize(expandedSurfaceSize)
         self.expansionTarget = expansionTarget < 0.5 ? 0 : 1
         self.presentationSurfaceSize = Self.normalizedSize(presentationSurfaceSize)
-        self.isExpandedContentInteractive = isExpandedContentInteractive
         updatePhysicalNotchSize(physicalNotchSize)
     }
 
@@ -44,10 +51,6 @@ public final class IslandDisplayContext {
 
     public func updatePresentationSurfaceSize(_ size: CGSize) {
         presentationSurfaceSize = Self.normalizedSize(size)
-    }
-
-    public func setExpandedContentInteractive(_ expanded: Bool) {
-        isExpandedContentInteractive = expanded
     }
 
     public func updatePhysicalNotchSize(_ size: CGSize?) {

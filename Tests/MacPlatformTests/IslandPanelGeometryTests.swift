@@ -60,6 +60,58 @@ final class IslandPanelGeometryTests: XCTestCase {
         XCTAssertFalse(state.acceptsCompletion(generation: collapsing, targetExpanded: true))
     }
 
+    func testOnlyLatestTransitionCanFinishExactlyOnce() {
+        var state = IslandPanelTransitionState()
+        let firstExpansion = state.begin(targetExpanded: true)
+        let collapse = state.begin(targetExpanded: false)
+        let finalExpansion = state.begin(targetExpanded: true)
+
+        XCTAssertFalse(state.finish(generation: firstExpansion, targetExpanded: true))
+        XCTAssertFalse(state.finish(generation: collapse, targetExpanded: false))
+        XCTAssertTrue(state.finish(generation: finalExpansion, targetExpanded: true))
+        XCTAssertFalse(state.finish(generation: finalExpansion, targetExpanded: true))
+    }
+
+    func testTransitionEnvironmentChangesForCardAndSameScreenGeometry() {
+        let original = IslandPanelTransitionEnvironment(
+            selectedCardID: "timer",
+            screenID: "display-1",
+            screenFrame: CGRect(x: 0, y: 0, width: 1_440, height: 900),
+            safeTopInset: 32,
+            auxiliaryTopLeftWidth: 620,
+            auxiliaryTopRightWidth: 620
+        )
+        let changedCard = IslandPanelTransitionEnvironment(
+            selectedCardID: "pusher",
+            screenID: original.screenID,
+            screenFrame: original.screenFrame,
+            safeTopInset: original.safeTopInset,
+            auxiliaryTopLeftWidth: original.auxiliaryTopLeftWidth,
+            auxiliaryTopRightWidth: original.auxiliaryTopRightWidth
+        )
+        let changedResolution = IslandPanelTransitionEnvironment(
+            selectedCardID: original.selectedCardID,
+            screenID: original.screenID,
+            screenFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            safeTopInset: original.safeTopInset,
+            auxiliaryTopLeftWidth: original.auxiliaryTopLeftWidth,
+            auxiliaryTopRightWidth: original.auxiliaryTopRightWidth
+        )
+        let changedSafeArea = IslandPanelTransitionEnvironment(
+            selectedCardID: original.selectedCardID,
+            screenID: original.screenID,
+            screenFrame: original.screenFrame,
+            safeTopInset: 0,
+            auxiliaryTopLeftWidth: nil,
+            auxiliaryTopRightWidth: nil
+        )
+
+        XCTAssertNotEqual(original, changedCard)
+        XCTAssertNotEqual(original, changedResolution)
+        XCTAssertNotEqual(original, changedSafeArea)
+        XCTAssertEqual(original, original)
+    }
+
     func testCompactAndExpandedFramesShareTopCenterAnchor() {
         let screenFrame = CGRect(x: -1_600, y: 120, width: 1_440, height: 900)
         let compact = IslandPanelGeometry.frame(

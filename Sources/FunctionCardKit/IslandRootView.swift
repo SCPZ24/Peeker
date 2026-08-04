@@ -17,17 +17,19 @@ public struct IslandRootView: View {
     }
 
     public var body: some View {
+        let interactivity = IslandContentInteractivity(isExpanded: coordinator.isExpanded)
+
         ZStack(alignment: .top) {
             ZStack {
                 expandedContent
                     .opacity(displayContext.expansionTarget)
-                    .allowsHitTesting(displayContext.isExpandedContentInteractive)
-                    .accessibilityHidden(!displayContext.isExpandedContentInteractive)
+                    .allowsHitTesting(interactivity.expandedAllowsHitTesting)
+                    .accessibilityHidden(!interactivity.expandedAllowsHitTesting)
 
                 compactContent
                     .opacity(1 - displayContext.expansionTarget)
-                    .allowsHitTesting(!displayContext.isExpandedContentInteractive)
-                    .accessibilityHidden(displayContext.isExpandedContentInteractive)
+                    .allowsHitTesting(interactivity.compactAllowsHitTesting)
+                    .accessibilityHidden(!interactivity.compactAllowsHitTesting)
             }
             .frame(width: surfaceSize.width, height: surfaceSize.height)
             .onGeometryChange(for: CGSize.self) { proxy in

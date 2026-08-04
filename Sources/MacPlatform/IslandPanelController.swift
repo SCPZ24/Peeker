@@ -13,6 +13,7 @@ public final class IslandPanelController {
     private var targetScreenID: String?
     private let didFallbackScreen: (String) -> Void
     private var transitionState = IslandPanelTransitionState()
+    private var transitionTask: Task<Void, Never>?
     nonisolated(unsafe) private var localMonitor: Any?
     nonisolated(unsafe) private var globalMonitor: Any?
     nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
@@ -44,6 +45,7 @@ public final class IslandPanelController {
     }
 
     deinit {
+        transitionTask?.cancel()
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
@@ -151,6 +153,10 @@ public final class IslandPanelController {
             auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,
             auxiliaryTopRightWidth: auxiliaryTopRightWidth
         )
+        let transitionEnvironment = makeTransitionEnvironment(
+            selectedCard: selected,
+            screen: screen
+        )
         let targetExpanded = coordinator.isExpanded
         let targetFrame = targetExpanded ? expandedFrame : compactFrame
         let generation = transitionState.begin(targetExpanded: targetExpanded)
@@ -161,6 +167,7 @@ public final class IslandPanelController {
             panelIsVisible: panel.isVisible
         )
         guard let duration else {
+            transitionTask?.cancel()
             displayContext.updateLayout(
                 physicalNotchSize: physicalNotchSize,
                 compactSurfaceSize: compactFrame.size,
@@ -168,11 +175,15 @@ public final class IslandPanelController {
             )
             displayContext.setExpansionTarget(targetExpanded ? 1 : 0)
             displayContext.updatePresentationSurfaceSize(targetFrame.size)
-            displayContext.setExpandedContentInteractive(targetExpanded)
+            _ = transitionState.finish(
+                generation: generation,
+                targetExpanded: targetExpanded
+            )
             panel.setFrame(targetFrame, display: true, animate: false)
             return
         }
 
+        transitionTask?.cancel()
         let hostFrame = IslandPanelGeometry.transitionHostFrame(
             compactFrame: compactFrame,
             expandedFrame: expandedFrame,
@@ -180,53 +191,68 @@ public final class IslandPanelController {
         )
         panel.setFrame(hostFrame, display: true, animate: false)
         hostingController.view.layoutSubtreeIfNeeded()
-        let screenID = ScreenTopologyService.stableID(for: screen)
 
-        Task { @MainActor [weak self] in
+        transitionTask = Task { @MainActor [weak self] in
             guard let self,
                   self.transitionState.acceptsCompletion(
                       generation: generation,
                       targetExpanded: targetExpanded
-                  ), self.targetScreenID == screenID
+                  ), self.targetScreenID == transitionEnvironment.screenID
             else { return }
-            withAnimation(
-                .easeInOut(duration: duration),
-                completionCriteria: .logicallyComplete
-            ) {
+            withAnimation(.easeInOut(duration: duration)) {
                 self.displayContext.updateLayout(
                     physicalNotchSize: physicalNotchSize,
                     compactSurfaceSize: compactFrame.size,
                     expandedSurfaceSize: expandedFrame.size
                 )
                 self.displayContext.setExpansionTarget(targetExpanded ? 1 : 0)
-            } completion: { [weak self] in
-                Task { @MainActor in
-                    self?.finishTransition(
-                        generation: generation,
-                        targetExpanded: targetExpanded,
-                        screenID: screenID,
-                        targetFrame: targetFrame
-                    )
-                }
             }
+            do {
+                try await Task.sleep(for: .seconds(duration))
+            } catch {
+                return
+            }
+            self.finishTransition(
+                generation: generation,
+                targetExpanded: targetExpanded,
+                environment: transitionEnvironment,
+                targetFrame: targetFrame
+            )
         }
     }
 
     private func finishTransition(
         generation: UInt64,
         targetExpanded: Bool,
-        screenID: String,
+        environment: IslandPanelTransitionEnvironment,
         targetFrame: CGRect
     ) {
-        guard transitionState.acceptsCompletion(
-            generation: generation,
-            targetExpanded: targetExpanded
-        ), coordinator.isExpanded == targetExpanded,
-           targetScreenID == screenID
+        guard let selectedCard = coordinator.registry.selectedCard,
+              let screen = screens.screen(withStableID: environment.screenID),
+              coordinator.isExpanded == targetExpanded,
+              targetScreenID == environment.screenID,
+              makeTransitionEnvironment(selectedCard: selectedCard, screen: screen) == environment,
+              transitionState.finish(
+                  generation: generation,
+                  targetExpanded: targetExpanded
+              )
         else { return }
         displayContext.updatePresentationSurfaceSize(targetFrame.size)
-        displayContext.setExpandedContentInteractive(targetExpanded)
         panel.setFrame(targetFrame, display: true, animate: false)
+    }
+
+    private func makeTransitionEnvironment(
+        selectedCard: FunctionCardRegistration,
+        screen: NSScreen
+    ) -> IslandPanelTransitionEnvironment {
+        IslandPanelTransitionEnvironment(
+            selectedCardID: selectedCard.id.rawValue,
+            screenID: ScreenTopologyService.stableID(for: screen),
+            screenFrame: screen.frame,
+            safeTopInset: screen.safeAreaInsets.top,
+            auxiliaryTopLeftWidth: screen.auxiliaryTopLeftArea?.width,
+            auxiliaryTopRightWidth: screen.auxiliaryTopRightArea?.width
+        )
     }
 
     private var visibleSurfaceFrame: CGRect {
