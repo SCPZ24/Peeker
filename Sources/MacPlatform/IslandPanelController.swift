@@ -159,7 +159,13 @@ public final class IslandPanelController {
         )
         let targetExpanded = coordinator.isExpanded
         let targetFrame = targetExpanded ? expandedFrame : compactFrame
-        let generation = transitionState.begin(targetExpanded: targetExpanded)
+        let request = IslandPanelTransitionRequest(
+            targetExpanded: targetExpanded,
+            environment: transitionEnvironment,
+            compactFrame: compactFrame,
+            expandedFrame: expandedFrame
+        )
+        guard let generation = transitionState.begin(request: request) else { return }
         let duration = IslandPanelAnimation.duration(
             requested: animated,
             isExpanded: targetExpanded,

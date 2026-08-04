@@ -22,14 +22,24 @@ struct IslandPanelTransitionEnvironment: Equatable {
     let auxiliaryTopRightWidth: CGFloat?
 }
 
+struct IslandPanelTransitionRequest: Equatable {
+    let targetExpanded: Bool
+    let environment: IslandPanelTransitionEnvironment
+    let compactFrame: CGRect
+    let expandedFrame: CGRect
+}
+
 struct IslandPanelTransitionState {
     private(set) var generation: UInt64 = 0
     private(set) var targetExpanded = false
+    private(set) var request: IslandPanelTransitionRequest?
     private var finishedGeneration: UInt64?
 
-    mutating func begin(targetExpanded: Bool) -> UInt64 {
+    mutating func begin(request: IslandPanelTransitionRequest) -> UInt64? {
+        guard self.request != request else { return nil }
         generation &+= 1
-        self.targetExpanded = targetExpanded
+        self.request = request
+        targetExpanded = request.targetExpanded
         finishedGeneration = nil
         return generation
     }

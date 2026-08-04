@@ -50,26 +50,72 @@ final class IslandPanelGeometryTests: XCTestCase {
         }
     }
 
-    func testNewTransitionGenerationInvalidatesEarlierCompletion() {
+    func testNewTransitionGenerationInvalidatesEarlierCompletion() throws {
         var state = IslandPanelTransitionState()
-        let expanding = state.begin(targetExpanded: true)
-        let collapsing = state.begin(targetExpanded: false)
+        let expanding = try XCTUnwrap(state.begin(request: makeTransitionRequest(targetExpanded: true)))
+        let collapsing = try XCTUnwrap(state.begin(request: makeTransitionRequest(targetExpanded: false)))
 
         XCTAssertFalse(state.acceptsCompletion(generation: expanding, targetExpanded: true))
         XCTAssertTrue(state.acceptsCompletion(generation: collapsing, targetExpanded: false))
         XCTAssertFalse(state.acceptsCompletion(generation: collapsing, targetExpanded: true))
     }
 
-    func testOnlyLatestTransitionCanFinishExactlyOnce() {
+    func testOnlyLatestTransitionCanFinishExactlyOnce() throws {
         var state = IslandPanelTransitionState()
-        let firstExpansion = state.begin(targetExpanded: true)
-        let collapse = state.begin(targetExpanded: false)
-        let finalExpansion = state.begin(targetExpanded: true)
+        let firstExpansion = try XCTUnwrap(state.begin(request: makeTransitionRequest(targetExpanded: true)))
+        let collapse = try XCTUnwrap(state.begin(request: makeTransitionRequest(targetExpanded: false)))
+        let finalExpansion = try XCTUnwrap(state.begin(request: makeTransitionRequest(
+            targetExpanded: true,
+            compactFrame: CGRect(x: 550, y: 862, width: 340, height: 39)
+        )))
 
         XCTAssertFalse(state.finish(generation: firstExpansion, targetExpanded: true))
         XCTAssertFalse(state.finish(generation: collapse, targetExpanded: false))
         XCTAssertTrue(state.finish(generation: finalExpansion, targetExpanded: true))
         XCTAssertFalse(state.finish(generation: finalExpansion, targetExpanded: true))
+    }
+
+    func testDuplicateTransitionRequestDoesNotBeginAgain() throws {
+        var state = IslandPanelTransitionState()
+        let request = makeTransitionRequest(targetExpanded: false)
+        let firstGeneration = try XCTUnwrap(state.begin(request: request))
+
+        XCTAssertNil(state.begin(request: request))
+        XCTAssertEqual(state.generation, firstGeneration)
+        XCTAssertTrue(state.acceptsCompletion(generation: firstGeneration, targetExpanded: false))
+    }
+
+    func testTransitionRequestChangesBeginNewGenerations() throws {
+        var state = IslandPanelTransitionState()
+        let compact = try XCTUnwrap(state.begin(request: makeTransitionRequest(targetExpanded: false)))
+        let expanded = try XCTUnwrap(state.begin(request: makeTransitionRequest(targetExpanded: true)))
+        let changedCard = try XCTUnwrap(state.begin(request: makeTransitionRequest(
+            targetExpanded: true,
+            selectedCardID: "pusher"
+        )))
+        let changedScreen = try XCTUnwrap(state.begin(request: makeTransitionRequest(
+            targetExpanded: true,
+            selectedCardID: "pusher",
+            screenFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080)
+        )))
+        let changedCompactFrame = try XCTUnwrap(state.begin(request: makeTransitionRequest(
+            targetExpanded: true,
+            selectedCardID: "pusher",
+            screenFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            compactFrame: CGRect(x: 780, y: 1_042, width: 360, height: 38)
+        )))
+        let changedExpandedFrame = try XCTUnwrap(state.begin(request: makeTransitionRequest(
+            targetExpanded: true,
+            selectedCardID: "pusher",
+            screenFrame: CGRect(x: 0, y: 0, width: 1_920, height: 1_080),
+            compactFrame: CGRect(x: 780, y: 1_042, width: 360, height: 38),
+            expandedFrame: CGRect(x: 550, y: 620, width: 820, height: 460)
+        )))
+
+        XCTAssertEqual(
+            [compact, expanded, changedCard, changedScreen, changedCompactFrame, changedExpandedFrame],
+            [1, 2, 3, 4, 5, 6]
+        )
     }
 
     func testTransitionEnvironmentChangesForCardAndSameScreenGeometry() {
@@ -250,5 +296,27 @@ final class IslandPanelGeometryTests: XCTestCase {
         XCTAssertEqual(frame.height, 584)
         XCTAssertEqual(frame.maxY, 640)
         XCTAssertEqual(frame.minY, 56)
+    }
+
+    private func makeTransitionRequest(
+        targetExpanded: Bool,
+        selectedCardID: String = "timer",
+        screenFrame: CGRect = CGRect(x: 0, y: 0, width: 1_440, height: 900),
+        compactFrame: CGRect = CGRect(x: 550, y: 862, width: 340, height: 38),
+        expandedFrame: CGRect = CGRect(x: 320, y: 440, width: 800, height: 460)
+    ) -> IslandPanelTransitionRequest {
+        IslandPanelTransitionRequest(
+            targetExpanded: targetExpanded,
+            environment: IslandPanelTransitionEnvironment(
+                selectedCardID: selectedCardID,
+                screenID: "display-1",
+                screenFrame: screenFrame,
+                safeTopInset: 0,
+                auxiliaryTopLeftWidth: nil,
+                auxiliaryTopRightWidth: nil
+            ),
+            compactFrame: compactFrame,
+            expandedFrame: expandedFrame
+        )
     }
 }

@@ -1,3 +1,4 @@
+import Observation
 import XCTest
 import SwiftUI
 import PeekerCore
@@ -26,6 +27,57 @@ final class IslandStateMachineTests: XCTestCase {
 
         XCTAssertFalse(state.canAutomaticallyCollapse)
         XCTAssertEqual(state.base, .hoverExpanded(featureID: timer))
+    }
+
+    @MainActor
+    func testEscapeOutsideWhileCompactDoesNotPublishPresentationChange() async {
+        let coordinator = makeCoordinator()
+        let unexpectedChange = expectation(description: "compact escape must not publish")
+        unexpectedChange.isInverted = true
+        withObservationTracking {
+            _ = coordinator.presentation.base
+        } onChange: {
+            unexpectedChange.fulfill()
+        }
+
+        coordinator.escape(pointerIsInside: false)
+
+        await fulfillment(of: [unexpectedChange], timeout: 0.05)
+        XCTAssertEqual(coordinator.presentation.base, .compact)
+    }
+
+    @MainActor
+    func testDelayedPointerExitWhileCompactDoesNotPublishPresentationChange() async {
+        let coordinator = makeCoordinator()
+        let unexpectedChange = expectation(description: "delayed compact exit must not publish")
+        unexpectedChange.isInverted = true
+        withObservationTracking {
+            _ = coordinator.presentation.base
+        } onChange: {
+            unexpectedChange.fulfill()
+        }
+
+        coordinator.pointerExited()
+
+        await fulfillment(of: [unexpectedChange], timeout: 0.45)
+        XCTAssertEqual(coordinator.presentation.base, .compact)
+    }
+
+    @MainActor
+    func testRealEscapeFromExpandedPublishesCompactTransition() async {
+        let coordinator = makeCoordinator()
+        coordinator.pointerEntered()
+        let changed = expectation(description: "expanded escape publishes compact state")
+        withObservationTracking {
+            _ = coordinator.presentation.base
+        } onChange: {
+            changed.fulfill()
+        }
+
+        coordinator.escape(pointerIsInside: false)
+
+        await fulfillment(of: [changed], timeout: 0.1)
+        XCTAssertEqual(coordinator.presentation.base, .compact)
     }
 
     func testClosingPopoverRestoresPinnedState() {
@@ -65,6 +117,11 @@ final class IslandStateMachineTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(400))
 
         XCTAssertEqual(coordinator.presentation.base, .compact)
+    }
+
+    @MainActor
+    private func makeCoordinator() -> IslandCoordinator {
+        IslandCoordinator(registry: CardRegistry(registrations: [makeRegistration(timer, order: 0)]))
     }
 
     @MainActor

@@ -26,7 +26,9 @@ public final class IslandCoordinator {
     public func pointerEntered() {
         isPointerInside = true
         collapseTask?.cancel()
-        presentation.pointerEntered(featureID: registry.selectedID)
+        mutatePresentation { presentation in
+            presentation.pointerEntered(featureID: registry.selectedID)
+        }
     }
 
     public func pointerExited() {
@@ -39,35 +41,60 @@ public final class IslandCoordinator {
         collapseTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
             guard !Task.isCancelled else { return }
-            self?.presentation.pointerExited()
+            self?.mutatePresentation { presentation in
+                presentation.pointerExited()
+            }
         }
     }
 
     public func togglePin() {
-        presentation.togglePin()
+        mutatePresentation { presentation in
+            presentation.togglePin()
+        }
     }
 
     public func escape(pointerIsInside: Bool) {
-        presentation.escape(pointerIsInside: pointerIsInside)
+        mutatePresentation { presentation in
+            presentation.escape(pointerIsInside: pointerIsInside)
+        }
     }
 
     public func select(_ id: FeatureID) {
         registry.select(id)
-        presentation.select(featureID: id)
+        mutatePresentation { presentation in
+            presentation.select(featureID: id)
+        }
     }
 
     public func setPopoverPresented(_ presented: Bool) {
-        presentation.setPopoverPresented(presented)
+        mutatePresentation { presentation in
+            presentation.setPopoverPresented(presented)
+        }
         if !presented, !isPointerInside { scheduleCollapseIfAllowed() }
     }
 
     public func setDragging(_ dragging: Bool) {
-        presentation.blockers.isDragging = dragging
+        mutatePresentation { presentation in
+            presentation.blockers.isDragging = dragging
+        }
         if !dragging, !isPointerInside { scheduleCollapseIfAllowed() }
     }
 
     public func setEditingText(_ editing: Bool) {
-        presentation.blockers.isEditingText = editing
+        mutatePresentation { presentation in
+            presentation.blockers.isEditingText = editing
+        }
         if !editing, !isPointerInside { scheduleCollapseIfAllowed() }
+    }
+
+    @discardableResult
+    private func mutatePresentation(
+        _ mutation: (inout IslandPresentationState) -> Void
+    ) -> Bool {
+        var next = presentation
+        mutation(&next)
+        guard next != presentation else { return false }
+        presentation = next
+        return true
     }
 }
