@@ -83,9 +83,7 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
                 INSERT INTO timer_daily_snapshots
                     (feature_id, day_start_at_ms, completion_ratio, completed_at_ms)
                 VALUES (?, ?, ?, ?)
-                ON CONFLICT(feature_id, day_start_at_ms) DO UPDATE SET
-                    completion_ratio = excluded.completion_ratio,
-                    completed_at_ms = excluded.completed_at_ms
+                ON CONFLICT(feature_id, day_start_at_ms) DO NOTHING
                 """,
                 arguments: [
                     transition.snapshot.businessDayID.featureID.rawValue,

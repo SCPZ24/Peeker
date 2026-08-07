@@ -27,6 +27,9 @@ public final class TimerStore {
     @ObservationIgnored private let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     @ObservationIgnored private let onStatisticsModeChanged: @MainActor (TimerStatisticsMode) -> Void
     @ObservationIgnored private var loadedSnapshotInterval: DateInterval?
+    @ObservationIgnored private var snapshotCache: [BusinessDayID: TimerDailySnapshot] = [:]
+    @ObservationIgnored private var snapshotLoadGeneration = 0
+    @ObservationIgnored private let mutationGate = TimerMutationGate()
 
     private let targetKey = TemporalEventKey("timer.target")
     private let boundaryKey = TemporalEventKey("timer.boundary")
@@ -54,6 +57,10 @@ public final class TimerStore {
     }
 
     public func load() async {
+        await withMutation { await loadUnlocked() }
+    }
+
+    private func loadUnlocked() async {
         isLoading = true
         defer { isLoading = false }
         do {
@@ -78,6 +85,16 @@ public final class TimerStore {
         targetSeconds: Int64,
         colorHex: String
     ) async {
+        await withMutation {
+            await createTemplateUnlocked(name: name, targetSeconds: targetSeconds, colorHex: colorHex)
+        }
+    }
+
+    private func createTemplateUnlocked(
+        name: String,
+        targetSeconds: Int64,
+        colorHex: String
+    ) async {
         do {
             let template = try TimerTemplate(
                 name: name,
@@ -97,12 +114,16 @@ public final class TimerStore {
     }
 
     public func updateTemplate(_ template: TimerTemplate) async {
+        await withMutation { await updateTemplateUnlocked(template) }
+    }
+
+    private func updateTemplateUnlocked(_ template: TimerTemplate) async {
         if let state = dayState,
            let active = state.activeSession,
            let activeTask = state.tasks.first(where: { $0.id == active.taskID && $0.templateID == template.id }) {
             let elapsed = max(0, clock.now().millisecondsSince1970 - active.startedAtMilliseconds) / 1_000
             if template.targetSeconds <= activeTask.accumulatedSeconds + elapsed {
-                try? await pause()
+                try? await pauseUnlocked(reason: .paused)
             }
         }
         let oldTemplates = templates
@@ -125,11 +146,15 @@ public final class TimerStore {
     }
 
     public func deleteTemplate(id: UUID) async {
+        await withMutation { await deleteTemplateUnlocked(id: id) }
+    }
+
+    private func deleteTemplateUnlocked(id: UUID) async {
         let oldTemplates = templates
         let oldState = dayState
         do {
             if dayState?.activeSession?.taskID == dayState?.tasks.first(where: { $0.templateID == id })?.id {
-                try await pause(reason: .taskDeleted)
+                try await pauseUnlocked(reason: .taskDeleted)
             }
             try await repository.deleteTemplate(id: id)
             templates.removeAll { $0.id == id }
@@ -143,6 +168,12 @@ public final class TimerStore {
     }
 
     public func reorderTemplates(fromOffsets: IndexSet, toOffset: Int) async {
+        await withMutation {
+            await reorderTemplatesUnlocked(fromOffsets: fromOffsets, toOffset: toOffset)
+        }
+    }
+
+    private func reorderTemplatesUnlocked(fromOffsets: IndexSet, toOffset: Int) async {
         let old = templates
         templates.move(fromOffsets: fromOffsets, toOffset: toOffset)
         do {
@@ -162,6 +193,10 @@ public final class TimerStore {
     }
 
     public func start(taskID: UUID) async {
+        await withMutation { await startUnlocked(taskID: taskID) }
+    }
+
+    private func startUnlocked(taskID: UUID) async {
         guard var state = dayState else { return }
         let old = state
         do {
@@ -178,6 +213,10 @@ public final class TimerStore {
     }
 
     public func pause(reason: TimerSessionEndReason = .paused) async throws {
+        try await withMutation { try await pauseUnlocked(reason: reason) }
+    }
+
+    private func pauseUnlocked(reason: TimerSessionEndReason) async throws {
         guard var state = dayState else { return }
         let old = state
         do {
@@ -207,6 +246,10 @@ public final class TimerStore {
     }
 
     public func updateRefreshTime(_ refreshTime: RefreshTime) async {
+        await withMutation { await updateRefreshTimeUnlocked(refreshTime) }
+    }
+
+    private func updateRefreshTimeUnlocked(_ refreshTime: RefreshTime) async {
         do {
             try await recoverThroughNow(playSound: false)
             if let current = dayState {
@@ -247,6 +290,10 @@ public final class TimerStore {
     }
 
     public func handleWake() async {
+        await withMutation { await handleWakeUnlocked() }
+    }
+
+    private func handleWakeUnlocked() async {
         do {
             try await recoverThroughNow(playSound: true)
             await scheduleEvents()
@@ -263,18 +310,17 @@ public final class TimerStore {
             let boundary = state.businessDay.end.millisecondsSince1970
             var continuingTemplateID: UUID?
             var completion: TimerSessionCompletion?
+            var shouldPlaySoundAfterCommit = false
             if let session = state.activeSession,
                let task = state.tasks.first(where: { $0.id == session.taskID }) {
                 let target = session.startedAtMilliseconds + task.remainingSeconds * 1_000
                 if target <= boundary {
                     completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
-                    if shouldPlayCompletionSound(
+                    shouldPlaySoundAfterCommit = shouldPlayCompletionSound(
                         targetMilliseconds: target,
                         nowMilliseconds: nowMilliseconds,
                         playSound: playSound
-                    ) {
-                        await audio.playCompletionSound()
-                    }
+                    )
                 } else {
                     continuingTemplateID = task.templateID
                     completion = try state.pause(atMilliseconds: boundary, reason: .businessDayBoundary)!
@@ -301,7 +347,9 @@ public final class TimerStore {
                     boundaryMilliseconds: boundary
                 )
             )
+            dayState = state
             cache(snapshot)
+            if shouldPlaySoundAfterCommit { await audio.playCompletionSound() }
         }
 
         if let session = state.activeSession,
@@ -331,11 +379,10 @@ public final class TimerStore {
     }
 
     private func cache(_ snapshot: TimerDailySnapshot) {
+        snapshotCache[snapshot.businessDayID] = snapshot
         let date = Date(millisecondsSince1970: snapshot.businessDayID.startAtMilliseconds)
         guard loadedSnapshotInterval?.contains(date) == true else { return }
-        snapshots.removeAll { $0.businessDayID == snapshot.businessDayID }
-        snapshots.append(snapshot)
-        snapshots.sort { $0.businessDayID.startAtMilliseconds < $1.businessDayID.startAtMilliseconds }
+        publishCachedSnapshots()
     }
 
     private func reloadSnapshots(for displayedMonth: Date) async throws {
@@ -345,13 +392,43 @@ public final class TimerStore {
             currentBusinessDayStart: currentStart
         )
         let interval = grid.snapshotQueryInterval()
+        snapshotLoadGeneration += 1
+        let generation = snapshotLoadGeneration
+        loadedSnapshotInterval = interval
+        publishCachedSnapshots()
         let loaded = try await repository.loadSnapshots(
             from: interval.start.millisecondsSince1970,
             to: interval.end.millisecondsSince1970
         )
         try Task.checkCancellation()
-        loadedSnapshotInterval = interval
-        snapshots = loaded
+        guard generation == snapshotLoadGeneration else { return }
+        for snapshot in loaded { snapshotCache[snapshot.businessDayID] = snapshot }
+        publishCachedSnapshots()
+    }
+
+    private func publishCachedSnapshots() {
+        guard let interval = loadedSnapshotInterval else { return }
+        snapshots = snapshotCache.values
+            .filter {
+                interval.contains(Date(millisecondsSince1970: $0.businessDayID.startAtMilliseconds))
+            }
+            .sorted {
+                $0.businessDayID.startAtMilliseconds < $1.businessDayID.startAtMilliseconds
+            }
+    }
+
+    private func withMutation<T>(
+        _ operation: @MainActor () async throws -> T
+    ) async rethrows -> T {
+        await mutationGate.lock()
+        do {
+            let value = try await operation()
+            await mutationGate.unlock()
+            return value
+        } catch {
+            await mutationGate.unlock()
+            throw error
+        }
     }
 
     private func scheduleEvents() async {
@@ -371,6 +448,29 @@ public final class TimerStore {
         }
         await eventHub.set(targetKey, at: targetDate, priority: 0) { [weak self] in
             await self?.handleWake()
+        }
+    }
+}
+
+private actor TimerMutationGate {
+    private var isLocked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func lock() async {
+        if !isLocked {
+            isLocked = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func unlock() {
+        if waiters.isEmpty {
+            isLocked = false
+        } else {
+            waiters.removeFirst().resume()
         }
     }
 }

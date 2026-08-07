@@ -687,7 +687,9 @@ private struct PusherCalendarDayCell: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(day.isCurrentBusinessDay ? Color.accentColor : Color.clear, lineWidth: 1.5)
         }
-        .opacity(day.isInDisplayedMonth ? 1 : 0.32)
+        .opacity(day.isInDisplayedMonth ? 1 : 0)
+        .allowsHitTesting(day.isInDisplayedMonth)
+        .accessibilityHidden(!day.isInDisplayedMonth)
         .help(accessibilityText)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)

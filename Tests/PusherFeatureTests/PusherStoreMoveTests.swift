@@ -92,6 +92,59 @@ final class PusherStoreMoveTests: XCTestCase {
         )
     }
 
+    func testPartialMultiDayRecoveryKeepsStoreAtLastCommittedPointer() async throws {
+        let fixture = try makeFixture(advanceFailureCall: 2)
+        let originalDay = await fixture.repository.currentBoard().businessDay
+        fixture.clock.set(originalDay.end.addingTimeInterval(86_401))
+
+        await fixture.store.load()
+
+        let persisted = await fixture.repository.currentBoard()
+        XCTAssertEqual(fixture.store.board, persisted)
+        XCTAssertEqual(fixture.store.board?.businessDay.start, originalDay.end)
+        XCTAssertNotNil(fixture.store.errorMessage)
+    }
+
+    func testOutOfOrderMonthLoadsCannotReplaceTheLatestDisplayedMonth() async throws {
+        let fixture = try makeFixture()
+        await fixture.store.load()
+        await fixture.repository.setSuspendSnapshotLoads(true)
+        let calendar = Calendar.autoupdatingCurrent
+        let july = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 10)))
+        let august = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 10)))
+        let currentStart = try XCTUnwrap(fixture.store.board?.businessDay.start)
+        let julyStart = CalendarMonthGrid(
+            displaying: july,
+            currentBusinessDayStart: currentStart,
+            calendar: calendar
+        ).snapshotQueryInterval(calendar: calendar).start.millisecondsSince1970
+        let augustStart = CalendarMonthGrid(
+            displaying: august,
+            currentBusinessDayStart: currentStart,
+            calendar: calendar
+        ).snapshotQueryInterval(calendar: calendar).start.millisecondsSince1970
+        let augustSnapshot = PusherDailySnapshot(
+            businessDayID: BusinessDayID(featureID: .pusher, startAtMilliseconds: august.millisecondsSince1970),
+            doneCount: 3,
+            totalCount: 4,
+            completedAtMilliseconds: august.millisecondsSince1970 + 86_400_000
+        )
+
+        let julyTask = Task { await fixture.store.loadSnapshots(for: july) }
+        await fixture.repository.waitForSnapshotLoad(startMilliseconds: julyStart)
+        let augustTask = Task { await fixture.store.loadSnapshots(for: august) }
+        await fixture.repository.waitForSnapshotLoad(startMilliseconds: augustStart)
+        await fixture.repository.releaseSnapshotLoad(
+            startMilliseconds: augustStart,
+            snapshots: [augustSnapshot]
+        )
+        await augustTask.value
+        await fixture.repository.releaseSnapshotLoad(startMilliseconds: julyStart, snapshots: [])
+        await julyTask.value
+
+        XCTAssertEqual(fixture.store.snapshots, [augustSnapshot])
+    }
+
     func testMoveRemainsLockedWhileDeferredRecoveryIsSuspended() async throws {
         let fixture = try makeFixture(suspendSnapshotSave: true)
         await fixture.store.load()
@@ -189,7 +242,8 @@ final class PusherStoreMoveTests: XCTestCase {
     private func makeFixture(
         reorderError: (any Error & Sendable)? = nil,
         includeProcessingTask: Bool = false,
-        suspendSnapshotSave: Bool = false
+        suspendSnapshotSave: Bool = false,
+        advanceFailureCall: Int? = nil
     ) throws -> (
         store: PusherStore,
         repository: TestPusherRepository,
@@ -228,7 +282,8 @@ final class PusherStoreMoveTests: XCTestCase {
         let repository = TestPusherRepository(
             board: PusherBoard(businessDay: day, tasks: tasks),
             reorderError: reorderError,
-            suspendSnapshotSave: suspendSnapshotSave
+            suspendSnapshotSave: suspendSnapshotSave,
+            advanceFailureCall: advanceFailureCall
         )
         let clock = MutableTestClock(date: day.start.addingTimeInterval(60))
         let eventHub = TemporalEventHub(clock: clock, scheduler: NoopTestScheduler())
@@ -276,25 +331,34 @@ private actor TestPusherRepository: PusherRepository {
     private var board: PusherBoard
     private let reorderError: (any Error & Sendable)?
     private let suspendSnapshotSave: Bool
+    private let advanceFailureCall: Int?
+    private var advanceCallCount = 0
     private var reorderedBoards: [PusherBoard] = []
     private var snapshots: [PusherDailySnapshot] = []
     private var snapshotSaveStarted = false
     private var snapshotStartWaiters: [CheckedContinuation<Void, Never>] = []
     private var snapshotRelease: CheckedContinuation<Void, Never>?
+    private var suspendSnapshotLoads = false
+    private var snapshotLoadContinuations: [Int64: CheckedContinuation<[PusherDailySnapshot], Never>] = [:]
+    private var snapshotLoadWaiters: [Int64: [CheckedContinuation<Void, Never>]] = [:]
 
     init(
         board: PusherBoard,
         reorderError: (any Error & Sendable)?,
-        suspendSnapshotSave: Bool
+        suspendSnapshotSave: Bool,
+        advanceFailureCall: Int?
     ) {
         self.board = board
         self.reorderError = reorderError
         self.suspendSnapshotSave = suspendSnapshotSave
+        self.advanceFailureCall = advanceFailureCall
     }
 
     func loadOrBootstrapCurrentBoard(resolvedToday: BusinessDay) async throws -> PusherBoard { board }
 
     func advanceDay(_ settlement: PusherSettlement) async throws -> PusherBoard {
+        advanceCallCount += 1
+        if advanceCallCount == advanceFailureCall { throw TestMoveError.persistenceFailed }
         snapshotSaveStarted = true
         let waiters = snapshotStartWaiters
         snapshotStartWaiters.removeAll()
@@ -330,7 +394,14 @@ private actor TestPusherRepository: PusherRepository {
         from startMilliseconds: Int64,
         to endMilliseconds: Int64
     ) async throws -> [PusherDailySnapshot] {
-        snapshots.filter {
+        if suspendSnapshotLoads {
+            let waiters = snapshotLoadWaiters.removeValue(forKey: startMilliseconds) ?? []
+            for waiter in waiters { waiter.resume() }
+            return await withCheckedContinuation { continuation in
+                snapshotLoadContinuations[startMilliseconds] = continuation
+            }
+        }
+        return snapshots.filter {
             $0.businessDayID.startAtMilliseconds >= startMilliseconds
                 && $0.businessDayID.startAtMilliseconds < endMilliseconds
         }
@@ -339,6 +410,21 @@ private actor TestPusherRepository: PusherRepository {
     func reorderCount() -> Int { reorderedBoards.count }
     func lastReorderedBoard() -> PusherBoard? { reorderedBoards.last }
     func currentBoard() -> PusherBoard { board }
+
+    func setSuspendSnapshotLoads(_ enabled: Bool) {
+        suspendSnapshotLoads = enabled
+    }
+
+    func waitForSnapshotLoad(startMilliseconds: Int64) async {
+        guard snapshotLoadContinuations[startMilliseconds] == nil else { return }
+        await withCheckedContinuation { continuation in
+            snapshotLoadWaiters[startMilliseconds, default: []].append(continuation)
+        }
+    }
+
+    func releaseSnapshotLoad(startMilliseconds: Int64, snapshots: [PusherDailySnapshot]) {
+        snapshotLoadContinuations.removeValue(forKey: startMilliseconds)?.resume(returning: snapshots)
+    }
 
     func waitForSnapshotSaveToStart() async {
         guard !snapshotSaveStarted else { return }

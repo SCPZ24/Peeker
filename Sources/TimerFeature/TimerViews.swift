@@ -686,7 +686,9 @@ private struct TimerCalendarDayRing: View {
                 .foregroundStyle(day.isCurrentBusinessDay ? .white : TimerIslandAppearance.secondaryText)
         }
         .frame(width: 20)
-        .opacity(day.isInDisplayedMonth ? 1 : 0.28)
+        .opacity(day.isInDisplayedMonth ? 1 : 0)
+        .allowsHitTesting(day.isInDisplayedMonth)
+        .accessibilityHidden(!day.isInDisplayedMonth)
         .help(accessibilityText)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)

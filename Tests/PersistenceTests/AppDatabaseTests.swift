@@ -313,6 +313,45 @@ final class AppDatabaseTests: XCTestCase {
         XCTAssertEqual(snapshots, [settlement.snapshot])
     }
 
+    func testPusherRecoveryNeverOverwritesAPreexistingV1Snapshot() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = PusherGRDBRepository(database: database)
+        let oldDay = makeDay(featureID: .pusher)
+        let nextDay = makeDay(featureID: .pusher, start: 86_400)
+        let task = try PusherTask(title: "Legacy", urgency: .urgent, businessDayID: oldDay.id)
+        try await repository.saveBoard(PusherBoard(businessDay: oldDay, tasks: [task]))
+        let current = try await repository.loadOrBootstrapCurrentBoard(resolvedToday: nextDay)
+        let frozen = PusherDailySnapshot(
+            businessDayID: oldDay.id,
+            doneCount: 7,
+            totalCount: 9,
+            completedAtMilliseconds: oldDay.end.millisecondsSince1970
+        )
+        try await database.queue.write { db in
+            try db.execute(
+                sql: "INSERT INTO pusher_daily_snapshots VALUES (?, ?, ?, ?, ?)",
+                arguments: [
+                    frozen.businessDayID.featureID.rawValue,
+                    frozen.businessDayID.startAtMilliseconds,
+                    frozen.doneCount,
+                    frozen.totalCount,
+                    frozen.completedAtMilliseconds,
+                ]
+            )
+        }
+        let settlement = PusherSettlement.settle(
+            current,
+            into: nextDay,
+            carryIncomplete: true,
+            atMilliseconds: oldDay.end.millisecondsSince1970
+        )
+
+        _ = try await repository.advanceDay(settlement)
+
+        let snapshots = try await repository.loadSnapshots(from: 0, to: 200_000_000)
+        XCTAssertEqual(snapshots, [frozen])
+    }
+
     func testPusherAdvanceRollsBackSnapshotNextBoardAndRuntimePointer() async throws {
         let database = try AppDatabase.inMemory()
         let repository = PusherGRDBRepository(database: database)
@@ -418,6 +457,51 @@ final class AppDatabaseTests: XCTestCase {
             try Bool.fetchOne(db, sql: "SELECT active FROM timer_sessions WHERE id = ?", arguments: [completion.session.id.uuidString])
         }
         XCTAssertEqual(oldSessionActive, false)
+    }
+
+    func testTimerRecoveryNeverOverwritesAPreexistingV1Snapshot() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = TimerGRDBRepository(database: database)
+        let oldDay = makeDay(featureID: .timer)
+        let nextDay = makeDay(featureID: .timer, start: 86_400)
+        let template = try TimerTemplate(name: "Legacy", targetSeconds: 600, colorHex: "#1685FF", position: 0)
+        try await repository.saveTemplate(template)
+        let current = try await repository.loadOrBootstrapCurrentDay(resolvedToday: oldDay)
+        let frozen = TimerDailySnapshot(
+            businessDayID: oldDay.id,
+            completionRatio: 0.75,
+            completedAtMilliseconds: oldDay.end.millisecondsSince1970
+        )
+        try await database.queue.write { db in
+            try db.execute(
+                sql: "INSERT INTO timer_daily_snapshots VALUES (?, ?, ?, ?)",
+                arguments: [
+                    frozen.businessDayID.featureID.rawValue,
+                    frozen.businessDayID.startAtMilliseconds,
+                    frozen.completionRatio,
+                    frozen.completedAtMilliseconds,
+                ]
+            )
+        }
+        let computed = TimerDailySnapshot(
+            businessDayID: oldDay.id,
+            completionRatio: current.completionRatio,
+            completedAtMilliseconds: oldDay.end.millisecondsSince1970
+        )
+
+        _ = try await repository.advanceDay(
+            TimerDayTransition(
+                settledState: current,
+                completion: nil,
+                snapshot: computed,
+                nextDay: nextDay,
+                continuingTemplateID: nil,
+                boundaryMilliseconds: oldDay.end.millisecondsSince1970
+            )
+        )
+
+        let snapshots = try await repository.loadSnapshots(from: 0, to: 200_000_000)
+        XCTAssertEqual(snapshots, [frozen])
     }
 
     func testTimerAdvanceRollsBackEverySettlementWrite() async throws {
@@ -554,6 +638,98 @@ final class AppDatabaseTests: XCTestCase {
         let playCount = await audio.playCount()
         XCTAssertEqual(playCount, 0)
         XCTAssertNil(store.dayState?.activeSession)
+    }
+
+    @MainActor
+    func testTimerPartialMultiDayRecoveryPublishesLastCommittedPointer() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = TimerGRDBRepository(database: database)
+        let oldDay = makeDay(featureID: .timer)
+        let template = try TimerTemplate(name: "Exercise", targetSeconds: 60, colorHex: "#1685FF", position: 0)
+        try await repository.saveTemplate(template)
+        _ = try await repository.loadOrBootstrapCurrentDay(resolvedToday: oldDay)
+        try await database.queue.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER reject_second_timer_recovery
+                BEFORE UPDATE ON feature_runtime_state
+                WHEN OLD.feature_id = 'timer' AND OLD.current_day_start_at_ms <> 0
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced second-day failure');
+                END
+                """)
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let clock = FixedTestClock(date: oldDay.end.addingTimeInterval(86_401))
+        let store = TimerStore(
+            repository: repository,
+            clock: clock,
+            resolver: BusinessDayResolver(calendar: calendar),
+            eventHub: TemporalEventHub(clock: clock, scheduler: PersistenceNoopScheduler()),
+            audio: SilentTestAudio()
+        )
+
+        await store.load()
+
+        let pointer = try await database.queue.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT current_day_start_at_ms FROM feature_runtime_state WHERE feature_id = 'timer'"
+            )
+        }
+        XCTAssertEqual(pointer, oldDay.end.millisecondsSince1970)
+        XCTAssertEqual(store.dayState?.businessDay.id.startAtMilliseconds, pointer)
+        XCTAssertNotNil(store.errorMessage)
+    }
+
+    @MainActor
+    func testTimerRefreshChangeKeepsActiveSessionAndCurrentBusinessDayID() async throws {
+        let database = try AppDatabase.inMemory()
+        let repository = TimerGRDBRepository(database: database)
+        let day = makeDay(featureID: .timer)
+        let template = try TimerTemplate(name: "Exercise", targetSeconds: 7_200, colorHex: "#1685FF", position: 0)
+        try await repository.saveTemplate(template)
+        var running = try await repository.loadOrBootstrapCurrentDay(resolvedToday: day)
+        try running.start(taskID: try XCTUnwrap(running.tasks.first?.id), atMilliseconds: 1_000)
+        let originalSession = try XCTUnwrap(running.activeSession)
+        try await repository.commitStart(state: running, session: originalSession)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let clock = FixedTestClock(date: day.start.addingTimeInterval(3_600))
+        let store = TimerStore(
+            repository: repository,
+            clock: clock,
+            resolver: BusinessDayResolver(calendar: calendar),
+            eventHub: TemporalEventHub(clock: clock, scheduler: PersistenceNoopScheduler()),
+            audio: SilentTestAudio()
+        )
+        await store.load()
+
+        await store.updateRefreshTime(try RefreshTime(hour: 6, minute: 0))
+
+        let stored = try await database.queue.read { db -> (Int64?, Int64?, Bool?) in
+            let pointer = try Int64.fetchOne(
+                db,
+                sql: "SELECT current_day_start_at_ms FROM feature_runtime_state WHERE feature_id = 'timer'"
+            )
+            let end = try Int64.fetchOne(
+                db,
+                sql: "SELECT end_at_ms FROM business_days WHERE feature_id = 'timer' AND start_at_ms = ?",
+                arguments: [day.id.startAtMilliseconds]
+            )
+            let active = try Bool.fetchOne(
+                db,
+                sql: "SELECT active FROM timer_sessions WHERE id = ?",
+                arguments: [originalSession.id.uuidString]
+            )
+            return (pointer, end, active)
+        }
+        XCTAssertEqual(store.dayState?.businessDay.id, day.id)
+        XCTAssertEqual(store.dayState?.activeSession?.id, originalSession.id)
+        XCTAssertEqual(stored.0, day.id.startAtMilliseconds)
+        XCTAssertEqual(stored.1, store.dayState?.businessDay.end.millisecondsSince1970)
+        XCTAssertGreaterThan(try XCTUnwrap(stored.1), clock.now().millisecondsSince1970)
+        XCTAssertEqual(stored.2, true)
     }
 
     private func makeDay(featureID: FeatureID, start: TimeInterval = 0) -> BusinessDay {

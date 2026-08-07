@@ -30,6 +30,8 @@ public final class PusherStore {
     @ObservationIgnored private var hasDeferredWake = false
     @ObservationIgnored private var isBoardMutationPending = false
     @ObservationIgnored private var loadedSnapshotInterval: DateInterval?
+    @ObservationIgnored private var snapshotCache: [BusinessDayID: PusherDailySnapshot] = [:]
+    @ObservationIgnored private var snapshotLoadGeneration = 0
     private let boundaryKey = TemporalEventKey("pusher.boundary")
 
     public init(
@@ -287,17 +289,17 @@ public final class PusherStore {
                 atMilliseconds: boundary
             )
             current = try await repository.advanceDay(settlement)
+            board = current
             cache(settlement.snapshot)
         }
         board = current
     }
 
     private func cache(_ snapshot: PusherDailySnapshot) {
+        snapshotCache[snapshot.businessDayID] = snapshot
         let date = Date(millisecondsSince1970: snapshot.businessDayID.startAtMilliseconds)
         guard loadedSnapshotInterval?.contains(date) == true else { return }
-        snapshots.removeAll { $0.businessDayID == snapshot.businessDayID }
-        snapshots.append(snapshot)
-        snapshots.sort { $0.businessDayID.startAtMilliseconds < $1.businessDayID.startAtMilliseconds }
+        publishCachedSnapshots()
     }
 
     private func reloadSnapshots(for displayedMonth: Date) async throws {
@@ -307,13 +309,29 @@ public final class PusherStore {
             currentBusinessDayStart: currentStart
         )
         let interval = grid.snapshotQueryInterval()
+        snapshotLoadGeneration += 1
+        let generation = snapshotLoadGeneration
+        loadedSnapshotInterval = interval
+        publishCachedSnapshots()
         let loaded = try await repository.loadSnapshots(
             from: interval.start.millisecondsSince1970,
             to: interval.end.millisecondsSince1970
         )
         try Task.checkCancellation()
-        loadedSnapshotInterval = interval
-        snapshots = loaded
+        guard generation == snapshotLoadGeneration else { return }
+        for snapshot in loaded { snapshotCache[snapshot.businessDayID] = snapshot }
+        publishCachedSnapshots()
+    }
+
+    private func publishCachedSnapshots() {
+        guard let interval = loadedSnapshotInterval else { return }
+        snapshots = snapshotCache.values
+            .filter {
+                interval.contains(Date(millisecondsSince1970: $0.businessDayID.startAtMilliseconds))
+            }
+            .sorted {
+                $0.businessDayID.startAtMilliseconds < $1.businessDayID.startAtMilliseconds
+            }
     }
 
     private func scheduleBoundary() async {

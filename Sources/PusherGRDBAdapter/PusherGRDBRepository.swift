@@ -73,10 +73,7 @@ public final class PusherGRDBRepository: PusherRepository, @unchecked Sendable {
                 INSERT INTO pusher_daily_snapshots
                     (feature_id, day_start_at_ms, done_count, total_count, completed_at_ms)
                 VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(feature_id, day_start_at_ms) DO UPDATE SET
-                    done_count = excluded.done_count,
-                    total_count = excluded.total_count,
-                    completed_at_ms = excluded.completed_at_ms
+                ON CONFLICT(feature_id, day_start_at_ms) DO NOTHING
                 """,
                 arguments: [
                     settlement.snapshot.businessDayID.featureID.rawValue,
