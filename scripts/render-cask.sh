@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-1.0.2}"
+VERSION="${1:-1.0.3}"
 ARCHIVE="${2:-$ROOT_DIR/dist/Peeker-v$VERSION.zip}"
 OUTPUT="${3:-$ROOT_DIR/dist/Casks/peeker.rb}"
 
