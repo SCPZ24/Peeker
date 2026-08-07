@@ -4,6 +4,9 @@
 # Existing local review artifacts
 .code-review-graph
 
+# Local Superpowers workflow artifacts
+.superpowers/
+
 # Swift and local app artifacts
 .build/
 dist/
