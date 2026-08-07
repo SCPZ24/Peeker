@@ -1,0 +1,4 @@
+interface:
+  display_name: "Peeker 发行"
+  short_description: "安全验证与发布 Peeker macOS 版本到 GitHub 和 Homebrew"
+  default_prompt: "Use $releasing-peeker to prepare and publish Peeker vX.Y.Z."
