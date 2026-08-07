@@ -76,7 +76,17 @@ public final class PusherStore {
     }
 
     public func create(title: String, urgency: PusherUrgency, repeatsDaily: Bool) async -> Bool {
-        guard var current = board, acquireBoardMutation() else { return false }
+        guard acquireBoardMutation() else { return false }
+        do {
+            try await prepareCurrentBoardForMutation()
+        } catch {
+            await finishBoardMutation()
+            return false
+        }
+        guard var current = board else {
+            await finishBoardMutation()
+            return false
+        }
         let old = current
         let succeeded: Bool
         do {
@@ -106,9 +116,18 @@ public final class PusherStore {
         urgency: PusherUrgency,
         repeatsDaily: Bool
     ) async -> Bool {
+        guard acquireBoardMutation() else { return false }
+        do {
+            try await prepareCurrentBoardForMutation()
+        } catch {
+            await finishBoardMutation()
+            return false
+        }
         guard var current = board,
-              var task = current.allTasks.first(where: { $0.id == taskID }),
-              acquireBoardMutation() else { return false }
+              var task = current.allTasks.first(where: { $0.id == taskID }) else {
+            await finishBoardMutation()
+            return false
+        }
         let old = current
         let succeeded: Bool
         do {
@@ -133,7 +152,17 @@ public final class PusherStore {
     }
 
     public func delete(taskID: UUID) async -> Bool {
-        guard var current = board, acquireBoardMutation() else { return false }
+        guard acquireBoardMutation() else { return false }
+        do {
+            try await prepareCurrentBoardForMutation()
+        } catch {
+            await finishBoardMutation()
+            return false
+        }
+        guard var current = board else {
+            await finishBoardMutation()
+            return false
+        }
         let old = current
         let succeeded: Bool
         do {
@@ -157,6 +186,11 @@ public final class PusherStore {
         insertionIndex: Int
     ) -> PusherMovePreparation {
         guard let current = board, acquireBoardMutation() else { return .rejected }
+        if current.businessDay.end <= clock.now() {
+            isBoardMutationPending = false
+            Task { [weak self] in await self?.handleWake() }
+            return .rejected
+        }
         do {
             var moved = current
             try moved.move(taskID: taskID, to: status, at: insertionIndex)
@@ -293,6 +327,17 @@ public final class PusherStore {
             cache(settlement.snapshot)
         }
         board = current
+    }
+
+    private func prepareCurrentBoardForMutation() async throws {
+        do {
+            try await recoverThroughNow()
+            await scheduleBoundary()
+        } catch {
+            await scheduleBoundary()
+            errorMessage = "Pusher 跨日恢复失败：\(error.localizedDescription)"
+            throw error
+        }
     }
 
     private func cache(_ snapshot: PusherDailySnapshot) {

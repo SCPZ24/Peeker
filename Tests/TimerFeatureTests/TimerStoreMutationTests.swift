@@ -51,12 +51,63 @@ final class TimerStoreMutationTests: XCTestCase {
         XCTAssertEqual(store.dayState?.businessDay.start, day.end)
         XCTAssertNotNil(store.dayState?.activeSession)
     }
+
+    func testPauseAfterBoundaryRecoversBeforeClosingTheCurrentSession() async throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        let day = BusinessDay(
+            featureID: .timer,
+            start: Date(timeIntervalSince1970: 0),
+            end: Date(timeIntervalSince1970: 86_400)
+        )
+        let template = try TimerTemplate(
+            name: "Exercise",
+            targetSeconds: 600,
+            colorHex: "#1685FF",
+            position: 0
+        )
+        let task = try TimerTaskInstance(template: template, businessDayID: day.id)
+        let repository = SuspendedStartTimerRepository(
+            template: template,
+            state: TimerDayState(businessDay: day, tasks: [task])
+        )
+        let clock = TimerMutableClock(date: day.end.addingTimeInterval(-30))
+        let store = TimerStore(
+            repository: repository,
+            clock: clock,
+            resolver: BusinessDayResolver(calendar: calendar),
+            eventHub: TemporalEventHub(clock: clock, scheduler: TimerNoopScheduler()),
+            audio: TimerSilentAudio()
+        )
+        await store.load()
+
+        let startTask = Task { await store.start(taskID: task.id) }
+        await repository.waitForCommitStart()
+        await repository.releaseCommitStart()
+        await startTask.value
+
+        let pauseDate = day.end.addingTimeInterval(5)
+        clock.set(pauseDate)
+        try await store.pause()
+
+        let completions = await repository.recordedCompletions()
+        XCTAssertEqual(store.dayState?.businessDay.start, day.end)
+        XCTAssertNil(store.dayState?.activeSession)
+        XCTAssertEqual(completions.map(\.endReason), [.businessDayBoundary, .paused])
+        XCTAssertEqual(completions.map(\.endedAtMilliseconds), [
+            day.end.millisecondsSince1970,
+            pauseDate.millisecondsSince1970,
+        ])
+        XCTAssertEqual(try XCTUnwrap(completions.first).session.businessDayID, day.id)
+        XCTAssertEqual(try XCTUnwrap(completions.last).session.businessDayID, store.dayState?.businessDay.id)
+    }
 }
 
 private actor SuspendedStartTimerRepository: TimerRepository {
     private let template: TimerTemplate
     private var state: TimerDayState
     private var snapshots: [TimerDailySnapshot] = []
+    private var completions: [TimerSessionCompletion] = []
     private var advanceCalls = 0
     private var commitStartBegan = false
     private var commitStartWaiters: [CheckedContinuation<Void, Never>] = []
@@ -72,6 +123,7 @@ private actor SuspendedStartTimerRepository: TimerRepository {
     func advanceDay(_ transition: TimerDayTransition) async throws -> TimerDayState {
         advanceCalls += 1
         snapshots.append(transition.snapshot)
+        if let completion = transition.completion { completions.append(completion) }
         let nextTask = try TimerTaskInstance(template: template, businessDayID: transition.nextDay.id)
         var next = TimerDayState(businessDay: transition.nextDay, tasks: [nextTask])
         if transition.continuingTemplateID == template.id {
@@ -106,6 +158,7 @@ private actor SuspendedStartTimerRepository: TimerRepository {
     func completeSession(_ completion: TimerSessionCompletion) async throws {}
     func interruptSession(_ interruption: TimerSessionInterruption) async throws {}
     func commitCompletion(state: TimerDayState, completion: TimerSessionCompletion) async throws {
+        completions.append(completion)
         self.state = state
     }
 
@@ -129,6 +182,7 @@ private actor SuspendedStartTimerRepository: TimerRepository {
     }
 
     func advanceCount() -> Int { advanceCalls }
+    func recordedCompletions() -> [TimerSessionCompletion] { completions }
 }
 
 private final class TimerMutableClock: Clock, @unchecked Sendable {

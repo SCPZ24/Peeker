@@ -96,6 +96,11 @@ public final class TimerStore {
         colorHex: String
     ) async {
         do {
+            try await prepareCurrentDayForMutation()
+        } catch {
+            return
+        }
+        do {
             let template = try TimerTemplate(
                 name: name,
                 targetSeconds: targetSeconds,
@@ -118,6 +123,11 @@ public final class TimerStore {
     }
 
     private func updateTemplateUnlocked(_ template: TimerTemplate) async {
+        do {
+            try await prepareCurrentDayForMutation()
+        } catch {
+            return
+        }
         if let state = dayState,
            let active = state.activeSession,
            let activeTask = state.tasks.first(where: { $0.id == active.taskID && $0.templateID == template.id }) {
@@ -150,6 +160,11 @@ public final class TimerStore {
     }
 
     private func deleteTemplateUnlocked(id: UUID) async {
+        do {
+            try await prepareCurrentDayForMutation()
+        } catch {
+            return
+        }
         let oldTemplates = templates
         let oldState = dayState
         do {
@@ -174,6 +189,11 @@ public final class TimerStore {
     }
 
     private func reorderTemplatesUnlocked(fromOffsets: IndexSet, toOffset: Int) async {
+        do {
+            try await prepareCurrentDayForMutation()
+        } catch {
+            return
+        }
         let old = templates
         templates.move(fromOffsets: fromOffsets, toOffset: toOffset)
         do {
@@ -197,9 +217,9 @@ public final class TimerStore {
     }
 
     private func startUnlocked(taskID: UUID) async {
-        guard var state = dayState else { return }
-        let old = state
         do {
+            try await prepareCurrentDayForMutation()
+            guard var state = dayState else { return }
             try state.start(taskID: taskID, atMilliseconds: clock.now().millisecondsSince1970)
             guard let session = state.activeSession else { return }
             try await repository.commitStart(state: state, session: session)
@@ -207,7 +227,6 @@ public final class TimerStore {
             errorMessage = nil
             await scheduleEvents()
         } catch {
-            dayState = old
             errorMessage = "无法开始计时：\(error.localizedDescription)"
         }
     }
@@ -217,9 +236,9 @@ public final class TimerStore {
     }
 
     private func pauseUnlocked(reason: TimerSessionEndReason) async throws {
-        guard var state = dayState else { return }
-        let old = state
         do {
+            try await prepareCurrentDayForMutation()
+            guard var state = dayState else { return }
             guard let completion = try state.pause(
                 atMilliseconds: clock.now().millisecondsSince1970,
                 reason: reason
@@ -229,7 +248,6 @@ public final class TimerStore {
             errorMessage = nil
             await scheduleEvents()
         } catch {
-            dayState = old
             errorMessage = "无法暂停计时：\(error.localizedDescription)"
             throw error
         }
@@ -376,6 +394,17 @@ public final class TimerStore {
         playSound: Bool
     ) -> Bool {
         playSound && (0...2_000).contains(nowMilliseconds - targetMilliseconds)
+    }
+
+    private func prepareCurrentDayForMutation() async throws {
+        do {
+            try await recoverThroughNow(playSound: false)
+            await scheduleEvents()
+        } catch {
+            await scheduleEvents()
+            errorMessage = "Timer 跨日恢复失败：\(error.localizedDescription)"
+            throw error
+        }
     }
 
     private func cache(_ snapshot: TimerDailySnapshot) {

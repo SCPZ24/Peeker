@@ -92,6 +92,28 @@ final class PusherStoreMoveTests: XCTestCase {
         )
     }
 
+    func testCreateAfterBoundaryRecoversBeforeWritingWhenCarryIsDisabled() async throws {
+        let fixture = try makeFixture(carryIncomplete: false)
+        await fixture.store.load()
+        let originalDay = try XCTUnwrap(fixture.store.board?.businessDay)
+        fixture.clock.set(originalDay.end.addingTimeInterval(1))
+
+        let created = await fixture.store.create(
+            title: "Created after boundary",
+            urgency: .urgent,
+            repeatsDaily: false
+        )
+
+        let current = try XCTUnwrap(fixture.store.board)
+        let persisted = await fixture.repository.currentBoard()
+        XCTAssertTrue(created)
+        XCTAssertEqual(current.businessDay.start, originalDay.end)
+        XCTAssertEqual(current.allTasks.map(\.title), ["Created after boundary"])
+        XCTAssertEqual(current.allTasks.first?.businessDayID, current.businessDay.id)
+        XCTAssertEqual(persisted, current)
+        XCTAssertEqual(fixture.store.snapshots.count, 1)
+    }
+
     func testPartialMultiDayRecoveryKeepsStoreAtLastCommittedPointer() async throws {
         let fixture = try makeFixture(advanceFailureCall: 2)
         let originalDay = await fixture.repository.currentBoard().businessDay
@@ -243,7 +265,8 @@ final class PusherStoreMoveTests: XCTestCase {
         reorderError: (any Error & Sendable)? = nil,
         includeProcessingTask: Bool = false,
         suspendSnapshotSave: Bool = false,
-        advanceFailureCall: Int? = nil
+        advanceFailureCall: Int? = nil,
+        carryIncomplete: Bool = true
     ) throws -> (
         store: PusherStore,
         repository: TestPusherRepository,
@@ -291,7 +314,8 @@ final class PusherStoreMoveTests: XCTestCase {
             repository: repository,
             clock: clock,
             resolver: BusinessDayResolver(calendar: Calendar(identifier: .gregorian)),
-            eventHub: eventHub
+            eventHub: eventHub,
+            carryIncomplete: carryIncomplete
         )
         return (store, repository, clock, first, second)
     }
