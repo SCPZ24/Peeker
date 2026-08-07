@@ -11,6 +11,102 @@ public final class PusherGRDBRepository: PusherRepository, @unchecked Sendable {
         self.database = database
     }
 
+    public func loadOrBootstrapCurrentBoard(resolvedToday: BusinessDay) async throws -> PusherBoard {
+        try await database.queue.write { db in
+            let featureID = FeatureID.pusher.rawValue
+            let storedStart = try Int64.fetchOne(
+                db,
+                sql: "SELECT current_day_start_at_ms FROM feature_runtime_state WHERE feature_id = ?",
+                arguments: [featureID]
+            )
+
+            let day: BusinessDay
+            if let storedStart {
+                day = try Self.fetchBusinessDay(featureID: .pusher, startMilliseconds: storedStart, db: db)
+            } else {
+                let taskStart = try Int64.fetchOne(
+                    db,
+                    sql: """
+                    SELECT MAX(day_start_at_ms) FROM pusher_tasks
+                    WHERE feature_id = ? AND archived = 0
+                    """,
+                    arguments: [featureID]
+                )
+                let settledEmptyBoardStart = try Int64.fetchOne(
+                    db,
+                    sql: """
+                    SELECT MAX(next_day.start_at_ms)
+                    FROM business_days AS next_day
+                    JOIN pusher_daily_snapshots AS snapshot
+                      ON snapshot.feature_id = next_day.feature_id
+                     AND snapshot.completed_at_ms = next_day.start_at_ms
+                    WHERE next_day.feature_id = ?
+                    """,
+                    arguments: [featureID]
+                )
+                if let candidate = [taskStart, settledEmptyBoardStart].compactMap({ $0 }).max() {
+                    day = try Self.fetchBusinessDay(featureID: .pusher, startMilliseconds: candidate, db: db)
+                } else {
+                    try persistBusinessDay(resolvedToday, in: db)
+                    day = resolvedToday
+                }
+                try Self.moveRuntimePointer(
+                    to: day,
+                    updatedAtMilliseconds: Date().millisecondsSince1970,
+                    db: db
+                )
+            }
+            return try Self.fetchBoard(day, db: db)
+        }
+    }
+
+    public func advanceDay(_ settlement: PusherSettlement) async throws -> PusherBoard {
+        try await database.queue.write { db in
+            try Self.requireRuntimePointer(
+                featureID: .pusher,
+                startMilliseconds: settlement.settledBoard.businessDay.id.startAtMilliseconds,
+                db: db
+            )
+            try Self.saveBoard(settlement.settledBoard, db: db)
+            try db.execute(
+                sql: """
+                INSERT INTO pusher_daily_snapshots
+                    (feature_id, day_start_at_ms, done_count, total_count, completed_at_ms)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(feature_id, day_start_at_ms) DO UPDATE SET
+                    done_count = excluded.done_count,
+                    total_count = excluded.total_count,
+                    completed_at_ms = excluded.completed_at_ms
+                """,
+                arguments: [
+                    settlement.snapshot.businessDayID.featureID.rawValue,
+                    settlement.snapshot.businessDayID.startAtMilliseconds,
+                    settlement.snapshot.doneCount,
+                    settlement.snapshot.totalCount,
+                    settlement.snapshot.completedAtMilliseconds,
+                ]
+            )
+            try Self.saveBoard(settlement.nextBoard, db: db)
+            try Self.moveRuntimePointer(
+                to: settlement.nextBoard.businessDay,
+                updatedAtMilliseconds: settlement.snapshot.completedAtMilliseconds,
+                db: db
+            )
+            return try Self.fetchBoard(settlement.nextBoard.businessDay, db: db)
+        }
+    }
+
+    public func updateCurrentBusinessDay(_ day: BusinessDay) async throws {
+        try await database.queue.write { db in
+            try Self.requireRuntimePointer(
+                featureID: .pusher,
+                startMilliseconds: day.id.startAtMilliseconds,
+                db: db
+            )
+            try persistBusinessDay(day, in: db)
+        }
+    }
+
     public func loadOrCreateDay(_ day: BusinessDay) async throws -> PusherBoard {
         try await database.queue.write { db in
             try persistBusinessDay(day, in: db)
@@ -20,12 +116,7 @@ public final class PusherGRDBRepository: PusherRepository, @unchecked Sendable {
 
     public func saveBoard(_ board: PusherBoard) async throws {
         try await database.queue.write { db in
-            try persistBusinessDay(board.businessDay, in: db)
-            try db.execute(
-                sql: "UPDATE pusher_tasks SET archived = 1 WHERE feature_id = ? AND day_start_at_ms = ?",
-                arguments: [board.businessDay.id.featureID.rawValue, board.businessDay.id.startAtMilliseconds]
-            )
-            for task in board.allTasks { try Self.upsert(task, archived: false, db: db) }
+            try Self.saveBoard(board, db: db)
         }
     }
 
@@ -96,24 +187,6 @@ public final class PusherGRDBRepository: PusherRepository, @unchecked Sendable {
         }
     }
 
-    public func saveSnapshot(_ snapshot: PusherDailySnapshot) async throws {
-        try await database.queue.write { db in
-            try db.execute(
-                sql: """
-                INSERT INTO pusher_daily_snapshots
-                (feature_id, day_start_at_ms, done_count, total_count, completed_at_ms)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(feature_id, day_start_at_ms) DO NOTHING
-                """,
-                arguments: [
-                    snapshot.businessDayID.featureID.rawValue,
-                    snapshot.businessDayID.startAtMilliseconds,
-                    snapshot.doneCount, snapshot.totalCount, snapshot.completedAtMilliseconds,
-                ]
-            )
-        }
-    }
-
     public func loadSnapshots(from startMilliseconds: Int64, to endMilliseconds: Int64) async throws -> [PusherDailySnapshot] {
         try await database.queue.read { db in
             try Row.fetchAll(
@@ -164,6 +237,65 @@ public final class PusherGRDBRepository: PusherRepository, @unchecked Sendable {
         return PusherBoard(businessDay: day, tasks: tasks)
     }
 
+    private static func fetchBusinessDay(
+        featureID: FeatureID,
+        startMilliseconds: Int64,
+        db: Database
+    ) throws -> BusinessDay {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: "SELECT * FROM business_days WHERE feature_id = ? AND start_at_ms = ?",
+            arguments: [featureID.rawValue, startMilliseconds]
+        ) else {
+            throw PusherPersistenceError.missingBusinessDay
+        }
+        return BusinessDay(
+            featureID: featureID,
+            start: Date(millisecondsSince1970: row["start_at_ms"]),
+            end: Date(millisecondsSince1970: row["end_at_ms"])
+        )
+    }
+
+    private static func saveBoard(_ board: PusherBoard, db: Database) throws {
+        try persistBusinessDay(board.businessDay, in: db)
+        try db.execute(
+            sql: "UPDATE pusher_tasks SET archived = 1 WHERE feature_id = ? AND day_start_at_ms = ?",
+            arguments: [board.businessDay.id.featureID.rawValue, board.businessDay.id.startAtMilliseconds]
+        )
+        for task in board.allTasks { try upsert(task, archived: false, db: db) }
+    }
+
+    private static func moveRuntimePointer(
+        to day: BusinessDay,
+        updatedAtMilliseconds: Int64,
+        db: Database
+    ) throws {
+        try persistBusinessDay(day, in: db)
+        try db.execute(
+            sql: """
+            INSERT INTO feature_runtime_state (feature_id, current_day_start_at_ms, updated_at_ms)
+            VALUES (?, ?, ?)
+            ON CONFLICT(feature_id) DO UPDATE SET
+                current_day_start_at_ms = excluded.current_day_start_at_ms,
+                updated_at_ms = excluded.updated_at_ms
+            """,
+            arguments: [day.id.featureID.rawValue, day.id.startAtMilliseconds, updatedAtMilliseconds]
+        )
+    }
+
+    private static func requireRuntimePointer(
+        featureID: FeatureID,
+        startMilliseconds: Int64,
+        db: Database
+    ) throws {
+        let stored = try Int64.fetchOne(
+            db,
+            sql: "SELECT current_day_start_at_ms FROM feature_runtime_state WHERE feature_id = ?",
+            arguments: [featureID.rawValue]
+        )
+        guard stored == startMilliseconds else { throw PusherPersistenceError.staleTransition }
+    }
+
     private static func upsert(_ task: PusherTask, archived: Bool, db: Database) throws {
         try db.execute(
             sql: """
@@ -207,4 +339,9 @@ public final class PusherGRDBRepository: PusherRepository, @unchecked Sendable {
             arguments: [seriesID.uuidString, task.title, task.urgency.rawValue, task.updatedAtMilliseconds]
         )
     }
+}
+
+private enum PusherPersistenceError: Error {
+    case missingBusinessDay
+    case staleTransition
 }

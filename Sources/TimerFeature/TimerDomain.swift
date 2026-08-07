@@ -244,3 +244,28 @@ public struct TimerDailySnapshot: Codable, Equatable, Sendable {
         self.completedAtMilliseconds = completedAtMilliseconds
     }
 }
+
+public struct TimerDayTransition: Equatable, Sendable {
+    public let settledState: TimerDayState
+    public let completion: TimerSessionCompletion?
+    public let snapshot: TimerDailySnapshot
+    public let nextDay: BusinessDay
+    public let continuingTemplateID: UUID?
+    public let boundaryMilliseconds: Int64
+
+    public init(
+        settledState: TimerDayState,
+        completion: TimerSessionCompletion?,
+        snapshot: TimerDailySnapshot,
+        nextDay: BusinessDay,
+        continuingTemplateID: UUID?,
+        boundaryMilliseconds: Int64
+    ) {
+        self.settledState = settledState
+        self.completion = completion
+        self.snapshot = snapshot
+        self.nextDay = nextDay
+        self.continuingTemplateID = continuingTemplateID
+        self.boundaryMilliseconds = boundaryMilliseconds
+    }
+}

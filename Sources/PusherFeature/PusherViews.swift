@@ -568,25 +568,145 @@ private struct PusherEditor: View {
 
 private struct PusherCalendarView: View {
     @Bindable var store: PusherStore
+    @State private var displayedMonth = Date.now
+    private var calendar: Calendar { .autoupdatingCurrent }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("完成日历").font(.headline)
-            if store.snapshots.isEmpty {
-                ContentUnavailableView("暂无历史", systemImage: "calendar")
-            } else {
-                ForEach(Array(store.snapshots.enumerated()), id: \.offset) { _, snapshot in
-                    HStack {
-                        Text(Date(millisecondsSince1970: snapshot.businessDayID.startAtMilliseconds), style: .date)
-                        Spacer()
-                        Text("完成 \(snapshot.doneCount)")
+        VStack(spacing: 10) {
+            HStack {
+                Text("完成日历").font(.headline)
+                Spacer()
+                Button { moveMonth(-1) } label: { Image(systemName: "chevron.left") }
+                    .buttonStyle(.plain)
+                Text(displayedMonth.formatted(.dateTime.year().month(.wide)))
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minWidth: 96)
+                Button { moveMonth(1) } label: { Image(systemName: "chevron.right") }
+                    .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 4) {
+                ForEach(Array(rotatedWeekdaySymbols.enumerated()), id: \.offset) { _, symbol in
+                    Text(symbol)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
+            let currentStart = store.board?.businessDay.start ?? Date.now
+            let grid = CalendarMonthGrid(
+                displaying: displayedMonth,
+                currentBusinessDayStart: currentStart,
+                calendar: calendar
+            )
+            VStack(spacing: 5) {
+                ForEach(Array(grid.weeks.enumerated()), id: \.offset) { _, week in
+                    HStack(spacing: 4) {
+                        ForEach(week) { day in
+                            PusherCalendarDayCell(
+                                day: day,
+                                value: value(for: day),
+                                accessibilityText: accessibilityText(for: day)
+                            )
+                        }
                     }
                 }
             }
+            Spacer(minLength: 0)
         }
         .padding(18)
-        .frame(width: 320, height: 260)
+        .frame(width: 360, height: 320)
         .foregroundStyle(Color.primary)
+        .task(id: monthTaskID) {
+            await store.loadSnapshots(for: displayedMonth)
+        }
+    }
+
+    private var rotatedWeekdaySymbols: [String] {
+        let symbols = calendar.veryShortStandaloneWeekdaySymbols
+        let offset = max(0, min(symbols.count - 1, calendar.firstWeekday - 1))
+        return Array(symbols[offset...]) + Array(symbols[..<offset])
+    }
+
+    private var monthTaskID: Int64 {
+        calendar.dateInterval(of: .month, for: displayedMonth)?.start.millisecondsSince1970 ?? 0
+    }
+
+    private func moveMonth(_ offset: Int) {
+        displayedMonth = calendar.date(byAdding: .month, value: offset, to: displayedMonth) ?? displayedMonth
+    }
+
+    private func value(for day: CalendarMonthDay) -> PusherCalendarValue? {
+        if day.isCurrentBusinessDay, let summary = store.board?.summary {
+            return PusherCalendarValue(
+                doneCount: summary.done,
+                totalCount: summary.planned + summary.processing + summary.done
+            )
+        }
+        guard !day.isFutureBusinessDay,
+              let snapshot = store.snapshots.first(where: {
+                  calendar.isDate(
+                      Date(millisecondsSince1970: $0.businessDayID.startAtMilliseconds),
+                      inSameDayAs: day.date
+                  )
+              }) else { return nil }
+        return PusherCalendarValue(doneCount: snapshot.doneCount, totalCount: snapshot.totalCount)
+    }
+
+    private func accessibilityText(for day: CalendarMonthDay) -> String {
+        let dateText = day.date.formatted(.dateTime.month().day().locale(Locale(identifier: "zh_CN")))
+        if day.isFutureBusinessDay { return "\(dateText)，未来日期" }
+        guard let value = value(for: day) else { return "\(dateText)，无记录" }
+        return "\(dateText)，完成 \(value.doneCount) 项，共 \(value.totalCount) 项"
+    }
+}
+
+private struct PusherCalendarValue {
+    let doneCount: Int
+    let totalCount: Int
+}
+
+private struct PusherCalendarDayCell: View {
+    let day: CalendarMonthDay
+    let value: PusherCalendarValue?
+    let accessibilityText: String
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Text(day.date.formatted(.dateTime.day()))
+                .font(.caption2.weight(day.isCurrentBusinessDay ? .bold : .regular).monospacedDigit())
+            Text(valueText)
+                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .foregroundStyle(value == nil ? Color.secondary : Color.primary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 30)
+        .padding(.vertical, 3)
+        .background(backgroundColor, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(day.isCurrentBusinessDay ? Color.accentColor : Color.clear, lineWidth: 1.5)
+        }
+        .opacity(day.isInDisplayedMonth ? 1 : 0.32)
+        .help(accessibilityText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var valueText: String {
+        guard let value else { return day.isFutureBusinessDay ? " " : "—" }
+        return "\(value.doneCount)/\(value.totalCount)"
+    }
+
+    private var backgroundColor: Color {
+        guard let value else { return Color.gray.opacity(0.08) }
+        guard let opacity = PusherCalendarMetrics.greenOpacity(
+            doneCount: value.doneCount,
+            totalCount: value.totalCount
+        ), opacity > 0 else {
+            return Color.gray.opacity(0.12)
+        }
+        return Color.green.opacity(opacity)
     }
 }
 

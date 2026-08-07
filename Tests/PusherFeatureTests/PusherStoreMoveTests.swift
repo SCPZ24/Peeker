@@ -74,7 +74,22 @@ final class PusherStoreMoveTests: XCTestCase {
 
         await fixture.store.persistMove(transaction)
         XCTAssertEqual(fixture.store.board?.businessDay.start, originalDay.end)
+        XCTAssertEqual(fixture.store.snapshots.count, 1)
         XCTAssertFalse(fixture.store.isMovePending)
+    }
+
+    func testInitialLoadRecoversBeforeReadingMonthSnapshots() async throws {
+        let fixture = try makeFixture()
+        let originalDay = await fixture.repository.currentBoard().businessDay
+        fixture.clock.set(originalDay.end.addingTimeInterval(86_401))
+
+        await fixture.store.load()
+
+        XCTAssertEqual(fixture.store.snapshots.count, 2)
+        XCTAssertEqual(
+            fixture.store.board?.businessDay.start.millisecondsSince1970,
+            fixture.store.snapshots.last?.completedAtMilliseconds
+        )
     }
 
     func testMoveRemainsLockedWhileDeferredRecoveryIsSuspended() async throws {
@@ -262,6 +277,7 @@ private actor TestPusherRepository: PusherRepository {
     private let reorderError: (any Error & Sendable)?
     private let suspendSnapshotSave: Bool
     private var reorderedBoards: [PusherBoard] = []
+    private var snapshots: [PusherDailySnapshot] = []
     private var snapshotSaveStarted = false
     private var snapshotStartWaiters: [CheckedContinuation<Void, Never>] = []
     private var snapshotRelease: CheckedContinuation<Void, Never>?
@@ -276,7 +292,28 @@ private actor TestPusherRepository: PusherRepository {
         self.suspendSnapshotSave = suspendSnapshotSave
     }
 
+    func loadOrBootstrapCurrentBoard(resolvedToday: BusinessDay) async throws -> PusherBoard { board }
+
+    func advanceDay(_ settlement: PusherSettlement) async throws -> PusherBoard {
+        snapshotSaveStarted = true
+        let waiters = snapshotStartWaiters
+        snapshotStartWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+        if suspendSnapshotSave {
+            await withCheckedContinuation { continuation in
+                snapshotRelease = continuation
+            }
+        }
+        snapshots.removeAll { $0.businessDayID == settlement.snapshot.businessDayID }
+        snapshots.append(settlement.snapshot)
+        board = settlement.nextBoard
+        return board
+    }
+
     func loadOrCreateDay(_ day: BusinessDay) async throws -> PusherBoard { board }
+    func updateCurrentBusinessDay(_ day: BusinessDay) async throws {
+        board = PusherBoard(businessDay: day, tasks: board.allTasks)
+    }
     func saveBoard(_ board: PusherBoard) async throws { self.board = board }
     func insertTask(_ task: PusherTask, at index: Int) async throws {}
     func updateTask(_ task: PusherTask) async throws {}
@@ -289,26 +326,19 @@ private actor TestPusherRepository: PusherRepository {
         board = reordered
     }
 
-    func saveSnapshot(_ snapshot: PusherDailySnapshot) async throws {
-        snapshotSaveStarted = true
-        let waiters = snapshotStartWaiters
-        snapshotStartWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
-        guard suspendSnapshotSave else { return }
-        await withCheckedContinuation { continuation in
-            snapshotRelease = continuation
-        }
-    }
-
     func loadSnapshots(
         from startMilliseconds: Int64,
         to endMilliseconds: Int64
     ) async throws -> [PusherDailySnapshot] {
-        []
+        snapshots.filter {
+            $0.businessDayID.startAtMilliseconds >= startMilliseconds
+                && $0.businessDayID.startAtMilliseconds < endMilliseconds
+        }
     }
 
     func reorderCount() -> Int { reorderedBoards.count }
     func lastReorderedBoard() -> PusherBoard? { reorderedBoards.last }
+    func currentBoard() -> PusherBoard { board }
 
     func waitForSnapshotSaveToStart() async {
         guard !snapshotSaveStarted else { return }

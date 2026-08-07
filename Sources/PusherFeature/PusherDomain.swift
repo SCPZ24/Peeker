@@ -259,6 +259,7 @@ public struct PusherDailySnapshot: Codable, Equatable, Sendable {
 }
 
 public struct PusherSettlement: Equatable, Sendable {
+    public let settledBoard: PusherBoard
     public let snapshot: PusherDailySnapshot
     public let nextBoard: PusherBoard
 
@@ -298,6 +299,7 @@ public struct PusherSettlement: Equatable, Sendable {
         }
 
         return PusherSettlement(
+            settledBoard: board,
             snapshot: snapshot,
             nextBoard: PusherBoard(businessDay: nextDay, tasks: nextTasks)
         )

@@ -11,6 +11,9 @@ struct StartupPersistenceError: LocalizedError, Sendable {
 final class UnavailableTimerRepository: TimerRepository, Sendable {
     private let error: StartupPersistenceError
     init(error: StartupPersistenceError) { self.error = error }
+    func loadOrBootstrapCurrentDay(resolvedToday: BusinessDay) async throws -> TimerDayState { throw error }
+    func advanceDay(_ transition: TimerDayTransition) async throws -> TimerDayState { throw error }
+    func updateCurrentBusinessDay(_ day: BusinessDay) async throws { throw error }
     func loadTemplates() async throws -> [TimerTemplate] { throw error }
     func saveTemplate(_ template: TimerTemplate) async throws { throw error }
     func deleteTemplate(id: UUID) async throws { throw error }
@@ -21,19 +24,20 @@ final class UnavailableTimerRepository: TimerRepository, Sendable {
     func completeSession(_ completion: TimerSessionCompletion) async throws { throw error }
     func interruptSession(_ interruption: TimerSessionInterruption) async throws { throw error }
     func commitCompletion(state: TimerDayState, completion: TimerSessionCompletion) async throws { throw error }
-    func saveSnapshot(_ snapshot: TimerDailySnapshot) async throws { throw error }
     func loadSnapshots(from startMilliseconds: Int64, to endMilliseconds: Int64) async throws -> [TimerDailySnapshot] { throw error }
 }
 
 final class UnavailablePusherRepository: PusherRepository, Sendable {
     private let error: StartupPersistenceError
     init(error: StartupPersistenceError) { self.error = error }
+    func loadOrBootstrapCurrentBoard(resolvedToday: BusinessDay) async throws -> PusherBoard { throw error }
+    func advanceDay(_ settlement: PusherSettlement) async throws -> PusherBoard { throw error }
+    func updateCurrentBusinessDay(_ day: BusinessDay) async throws { throw error }
     func loadOrCreateDay(_ day: BusinessDay) async throws -> PusherBoard { throw error }
     func saveBoard(_ board: PusherBoard) async throws { throw error }
     func insertTask(_ task: PusherTask, at index: Int) async throws { throw error }
     func updateTask(_ task: PusherTask) async throws { throw error }
     func deleteTask(id: UUID) async throws { throw error }
     func reorderTasks(businessDayID: BusinessDayID, orderedTasks: [PusherTask]) async throws { throw error }
-    func saveSnapshot(_ snapshot: PusherDailySnapshot) async throws { throw error }
     func loadSnapshots(from startMilliseconds: Int64, to endMilliseconds: Int64) async throws -> [PusherDailySnapshot] { throw error }
 }

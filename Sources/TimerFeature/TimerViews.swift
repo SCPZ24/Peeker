@@ -162,7 +162,7 @@ private struct TimerExpandedView: View {
                             .multilineTextAlignment(.center)
                     }
                 } else {
-                    TimerHeatmap(snapshots: store.snapshots)
+                    TimerActivityCalendar(store: store)
                 }
             }
             .frame(width: 165)
@@ -543,23 +543,187 @@ private struct TimerPresetColorPicker: View {
     }
 }
 
-private struct TimerHeatmap: View {
-    let snapshots: [TimerDailySnapshot]
-    private let columns = Array(repeating: GridItem(.fixed(18), spacing: 4), count: 7)
+private struct TimerActivityCalendar: View {
+    @Bindable var store: TimerStore
+    @State private var displayedMonth = Date.now
+    private var calendar: Calendar { .autoupdatingCurrent }
 
     var body: some View {
-        VStack(spacing: 8) {
-            Text("近期完成度")
-                .font(.caption)
-                .foregroundStyle(TimerIslandAppearance.secondaryText)
-            LazyVGrid(columns: columns, spacing: 4) {
-                ForEach(Array(snapshots.suffix(35).enumerated()), id: \.offset) { _, snapshot in
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color.green.opacity(max(0.08, snapshot.completionRatio ?? 0)))
-                        .frame(width: 18, height: 18)
-                        .help(Date(millisecondsSince1970: snapshot.businessDayID.startAtMilliseconds).formatted(date: .abbreviated, time: .omitted))
+        VStack(spacing: 5) {
+            monthHeader
+            weekdayHeader
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let currentStart = store.dayState?.businessDay.start ?? context.date
+                let grid = CalendarMonthGrid(
+                    displaying: displayedMonth,
+                    currentBusinessDayStart: currentStart,
+                    calendar: calendar
+                )
+                VStack(spacing: 4) {
+                    ForEach(Array(grid.weeks.enumerated()), id: \.offset) { _, week in
+                        HStack(spacing: 3) {
+                            ForEach(week) { day in
+                                TimerCalendarDayRing(
+                                    day: day,
+                                    state: state(for: day, at: context.date),
+                                    accessibilityText: accessibilityText(for: day, at: context.date)
+                                )
+                            }
+                        }
+                    }
                 }
             }
+        }
+        .frame(maxWidth: .infinity)
+        .task(id: monthTaskID) {
+            await store.loadSnapshots(for: displayedMonth)
+        }
+    }
+
+    private var monthHeader: some View {
+        HStack(spacing: 6) {
+            Button { moveMonth(-1) } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 0)
+            Text(displayedMonth.formatted(.dateTime.year().month(.abbreviated)))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TimerIslandAppearance.primaryText)
+            Spacer(minLength: 0)
+            Button { moveMonth(1) } label: {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(.plain)
+        }
+        .foregroundStyle(TimerIslandAppearance.secondaryText)
+    }
+
+    private var weekdayHeader: some View {
+        let symbols = rotatedWeekdaySymbols
+        return HStack(spacing: 3) {
+            ForEach(Array(symbols.enumerated()), id: \.offset) { _, symbol in
+                Text(symbol)
+                    .font(.system(size: 7, weight: .medium))
+                    .foregroundStyle(TimerIslandAppearance.secondaryText)
+                    .frame(width: 20)
+            }
+        }
+    }
+
+    private var rotatedWeekdaySymbols: [String] {
+        let symbols = calendar.veryShortStandaloneWeekdaySymbols
+        let offset = max(0, min(symbols.count - 1, calendar.firstWeekday - 1))
+        return Array(symbols[offset...]) + Array(symbols[..<offset])
+    }
+
+    private var monthTaskID: Int64 {
+        calendar.dateInterval(of: .month, for: displayedMonth)?.start.millisecondsSince1970 ?? 0
+    }
+
+    private func moveMonth(_ offset: Int) {
+        displayedMonth = calendar.date(byAdding: .month, value: offset, to: displayedMonth) ?? displayedMonth
+    }
+
+    private func state(for day: CalendarMonthDay, at now: Date) -> TimerCalendarRingState {
+        if day.isFutureBusinessDay { return .future }
+        if day.isCurrentBusinessDay {
+            guard let tasks = store.dayState?.visibleTasks else { return .noTasks }
+            let progress = tasks.map {
+                TimerProgressSnapshot(
+                    targetSeconds: $0.targetSeconds,
+                    remainingSeconds: store.remainingSeconds(for: $0, at: now)
+                )
+            }
+            return .recorded(ratio: TimerProgressMetrics.totalRatio(progress))
+        }
+        guard let snapshot = snapshot(for: day.date) else { return .missing }
+        return .recorded(ratio: snapshot.completionRatio)
+    }
+
+    private func snapshot(for date: Date) -> TimerDailySnapshot? {
+        store.snapshots.first {
+            calendar.isDate(
+                Date(millisecondsSince1970: $0.businessDayID.startAtMilliseconds),
+                inSameDayAs: date
+            )
+        }
+    }
+
+    private func accessibilityText(for day: CalendarMonthDay, at now: Date) -> String {
+        let dateText = day.date.formatted(.dateTime.month().day().locale(Locale(identifier: "zh_CN")))
+        switch state(for: day, at: now) {
+        case .future:
+            return "\(dateText)，未来日期"
+        case .missing:
+            return "\(dateText)，无记录"
+        case .noTasks:
+            return "\(dateText)，无任务"
+        case let .progress(ratio, _):
+            return "\(dateText)，完成度 \(Int((ratio * 100).rounded()))%"
+        case .completed:
+            return "\(dateText)，完成度 100%"
+        }
+    }
+}
+
+private struct TimerCalendarDayRing: View {
+    let day: CalendarMonthDay
+    let state: TimerCalendarRingState
+    let accessibilityText: String
+
+    var body: some View {
+        VStack(spacing: 1) {
+            ZStack {
+                Circle()
+                    .stroke(Color(hex: "#343437"), lineWidth: 2.5)
+                progressStroke
+                centerMark
+            }
+            .frame(width: 18, height: 18)
+            Text(day.date.formatted(.dateTime.day()))
+                .font(.system(size: 7, weight: day.isCurrentBusinessDay ? .bold : .regular).monospacedDigit())
+                .foregroundStyle(day.isCurrentBusinessDay ? .white : TimerIslandAppearance.secondaryText)
+        }
+        .frame(width: 20)
+        .opacity(day.isInDisplayedMonth ? 1 : 0.28)
+        .help(accessibilityText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    @ViewBuilder
+    private var progressStroke: some View {
+        switch state {
+        case let .progress(ratio, color) where ratio > 0:
+            Circle()
+                .trim(from: 0, to: ratio)
+                .stroke(
+                    color == .yellow ? Color(hex: "#FFD60A") : Color(hex: "#1685FF"),
+                    style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+        case .completed:
+            Circle()
+                .stroke(Color(hex: "#1685FF"), lineWidth: 2.5)
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var centerMark: some View {
+        switch state {
+        case .completed:
+            Image(systemName: "checkmark")
+                .font(.system(size: 7, weight: .bold))
+                .foregroundStyle(.white)
+        case .noTasks:
+            Capsule().fill(.secondary).frame(width: 5, height: 1)
+        case .missing:
+            Circle().fill(.secondary.opacity(0.65)).frame(width: 2, height: 2)
+        default:
+            EmptyView()
         }
     }
 }

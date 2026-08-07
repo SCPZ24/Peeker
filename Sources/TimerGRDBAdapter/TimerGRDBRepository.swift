@@ -11,6 +11,118 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
         self.database = database
     }
 
+    public func loadOrBootstrapCurrentDay(resolvedToday: BusinessDay) async throws -> TimerDayState {
+        try await database.queue.write { db in
+            let featureID = FeatureID.timer.rawValue
+            let storedStart = try Int64.fetchOne(
+                db,
+                sql: "SELECT current_day_start_at_ms FROM feature_runtime_state WHERE feature_id = ?",
+                arguments: [featureID]
+            )
+            let day: BusinessDay
+            if let storedStart {
+                day = try Self.fetchBusinessDay(featureID: .timer, startMilliseconds: storedStart, db: db)
+            } else {
+                let activeSessionStart = try Int64.fetchOne(
+                    db,
+                    sql: """
+                    SELECT day_start_at_ms FROM timer_sessions
+                    WHERE feature_id = ? AND active = 1
+                    ORDER BY started_at_ms DESC LIMIT 1
+                    """,
+                    arguments: [featureID]
+                )
+                let latestInstanceStart = try Int64.fetchOne(
+                    db,
+                    sql: "SELECT MAX(day_start_at_ms) FROM timer_day_instances WHERE feature_id = ?",
+                    arguments: [featureID]
+                )
+                let settledEmptyDayStart = try Int64.fetchOne(
+                    db,
+                    sql: """
+                    SELECT MAX(next_day.start_at_ms)
+                    FROM business_days AS next_day
+                    JOIN timer_daily_snapshots AS snapshot
+                      ON snapshot.feature_id = next_day.feature_id
+                     AND snapshot.completed_at_ms = next_day.start_at_ms
+                    WHERE next_day.feature_id = ?
+                    """,
+                    arguments: [featureID]
+                )
+                let candidate = activeSessionStart
+                    ?? [latestInstanceStart, settledEmptyDayStart].compactMap({ $0 }).max()
+                if let candidate {
+                    day = try Self.fetchBusinessDay(featureID: .timer, startMilliseconds: candidate, db: db)
+                } else {
+                    try persistBusinessDay(resolvedToday, in: db)
+                    day = resolvedToday
+                }
+                try Self.moveRuntimePointer(
+                    to: day,
+                    updatedAtMilliseconds: Date().millisecondsSince1970,
+                    db: db
+                )
+            }
+            try Self.ensureDayInstances(day, db: db)
+            return try Self.fetchDay(day, db: db)
+        }
+    }
+
+    public func advanceDay(_ transition: TimerDayTransition) async throws -> TimerDayState {
+        try await database.queue.write { db in
+            try Self.requireRuntimePointer(
+                featureID: .timer,
+                startMilliseconds: transition.settledState.businessDay.id.startAtMilliseconds,
+                db: db
+            )
+            try persistBusinessDay(transition.settledState.businessDay, in: db)
+            for task in transition.settledState.tasks { try Self.upsert(task, db: db) }
+            if let completion = transition.completion { try Self.finish(completion, db: db) }
+            try db.execute(
+                sql: """
+                INSERT INTO timer_daily_snapshots
+                    (feature_id, day_start_at_ms, completion_ratio, completed_at_ms)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(feature_id, day_start_at_ms) DO UPDATE SET
+                    completion_ratio = excluded.completion_ratio,
+                    completed_at_ms = excluded.completed_at_ms
+                """,
+                arguments: [
+                    transition.snapshot.businessDayID.featureID.rawValue,
+                    transition.snapshot.businessDayID.startAtMilliseconds,
+                    transition.snapshot.completionRatio,
+                    transition.snapshot.completedAtMilliseconds,
+                ]
+            )
+            try persistBusinessDay(transition.nextDay, in: db)
+            try Self.ensureDayInstances(transition.nextDay, db: db)
+            var nextState = try Self.fetchDay(transition.nextDay, db: db)
+            if let templateID = transition.continuingTemplateID,
+               let task = nextState.tasks.first(where: { $0.templateID == templateID }) {
+                try nextState.start(taskID: task.id, atMilliseconds: transition.boundaryMilliseconds)
+                for nextTask in nextState.tasks { try Self.upsert(nextTask, db: db) }
+                if let session = nextState.activeSession { try Self.insertSession(session, db: db) }
+            }
+            try Self.moveRuntimePointer(
+                to: transition.nextDay,
+                updatedAtMilliseconds: transition.boundaryMilliseconds,
+                db: db
+            )
+            return nextState
+        }
+    }
+
+    public func updateCurrentBusinessDay(_ day: BusinessDay) async throws {
+        try await database.queue.write { db in
+            try Self.requireRuntimePointer(
+                featureID: .timer,
+                startMilliseconds: day.id.startAtMilliseconds,
+                db: db
+            )
+            try persistBusinessDay(day, in: db)
+        }
+    }
+
     public func loadTemplates() async throws -> [TimerTemplate] {
         try await database.queue.read { db in try Self.fetchTemplates(db) }
     }
@@ -67,34 +179,7 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
     public func loadOrCreateDay(_ day: BusinessDay) async throws -> TimerDayState {
         try await database.queue.write { db in
             try persistBusinessDay(day, in: db)
-            let templates = try Self.fetchTemplates(db)
-            for template in templates {
-                let exists = try Bool.fetchOne(
-                    db,
-                    sql: """
-                    SELECT EXISTS(
-                        SELECT 1 FROM timer_day_instances
-                        WHERE template_id = ? AND feature_id = ? AND day_start_at_ms = ?
-                    )
-                    """,
-                    arguments: [template.id.uuidString, day.id.featureID.rawValue, day.id.startAtMilliseconds]
-                ) ?? false
-                if !exists {
-                    try db.execute(
-                        sql: """
-                        INSERT INTO timer_day_instances
-                        (id, template_id, feature_id, day_start_at_ms, name, target_seconds,
-                         color_hex, position, accumulated_seconds, status, visible)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'idle', 1)
-                        """,
-                        arguments: [
-                            UUID().uuidString, template.id.uuidString, day.id.featureID.rawValue,
-                            day.id.startAtMilliseconds, template.name, template.targetSeconds,
-                            template.colorHex, template.position,
-                        ]
-                    )
-                }
-            }
+            try Self.ensureDayInstances(day, db: db)
             return try Self.fetchDay(day, db: db)
         }
     }
@@ -110,19 +195,7 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
 
     public func beginSession(_ session: TimerSession) async throws {
         try await database.queue.write { db in
-            try db.execute(
-                sql: """
-                INSERT INTO timer_sessions
-                (id, task_id, feature_id, day_start_at_ms, started_at_ms, active)
-                VALUES (?, ?, ?, ?, ?, 1)
-                """,
-                arguments: [
-                    session.id.uuidString, session.taskID.uuidString,
-                    session.businessDayID.featureID.rawValue,
-                    session.businessDayID.startAtMilliseconds,
-                    session.startedAtMilliseconds,
-                ]
-            )
+            try Self.insertSession(session, db: db)
         }
     }
 
@@ -130,19 +203,7 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
         try await database.queue.write { db in
             try persistBusinessDay(state.businessDay, in: db)
             for task in state.tasks { try Self.upsert(task, db: db) }
-            try db.execute(
-                sql: """
-                INSERT INTO timer_sessions
-                (id, task_id, feature_id, day_start_at_ms, started_at_ms, active)
-                VALUES (?, ?, ?, ?, ?, 1)
-                """,
-                arguments: [
-                    session.id.uuidString, session.taskID.uuidString,
-                    session.businessDayID.featureID.rawValue,
-                    session.businessDayID.startAtMilliseconds,
-                    session.startedAtMilliseconds,
-                ]
-            )
+            try Self.insertSession(session, db: db)
         }
     }
 
@@ -160,25 +221,6 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
         try await database.queue.write { db in
             for task in state.tasks { try Self.upsert(task, db: db) }
             try Self.finish(completion, db: db)
-        }
-    }
-
-    public func saveSnapshot(_ snapshot: TimerDailySnapshot) async throws {
-        try await database.queue.write { db in
-            try db.execute(
-                sql: """
-                INSERT INTO timer_daily_snapshots
-                (feature_id, day_start_at_ms, completion_ratio, completed_at_ms)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(feature_id, day_start_at_ms) DO NOTHING
-                """,
-                arguments: [
-                    snapshot.businessDayID.featureID.rawValue,
-                    snapshot.businessDayID.startAtMilliseconds,
-                    snapshot.completionRatio,
-                    snapshot.completedAtMilliseconds,
-                ]
-            )
         }
     }
 
@@ -217,6 +259,73 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
                 updatedAtMilliseconds: row["updated_at_ms"]
             )
         }
+    }
+
+    private static func ensureDayInstances(_ day: BusinessDay, db: Database) throws {
+        for template in try fetchTemplates(db) {
+            try db.execute(
+                sql: """
+                INSERT INTO timer_day_instances
+                    (id, template_id, feature_id, day_start_at_ms, name, target_seconds,
+                     color_hex, position, accumulated_seconds, status, visible)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'idle', 1)
+                ON CONFLICT(template_id, feature_id, day_start_at_ms) DO NOTHING
+                """,
+                arguments: [
+                    UUID().uuidString, template.id.uuidString, day.id.featureID.rawValue,
+                    day.id.startAtMilliseconds, template.name, template.targetSeconds,
+                    template.colorHex, template.position,
+                ]
+            )
+        }
+    }
+
+    private static func fetchBusinessDay(
+        featureID: FeatureID,
+        startMilliseconds: Int64,
+        db: Database
+    ) throws -> BusinessDay {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: "SELECT * FROM business_days WHERE feature_id = ? AND start_at_ms = ?",
+            arguments: [featureID.rawValue, startMilliseconds]
+        ) else { throw TimerPersistenceError.missingBusinessDay }
+        return BusinessDay(
+            featureID: featureID,
+            start: Date(millisecondsSince1970: row["start_at_ms"]),
+            end: Date(millisecondsSince1970: row["end_at_ms"])
+        )
+    }
+
+    private static func moveRuntimePointer(
+        to day: BusinessDay,
+        updatedAtMilliseconds: Int64,
+        db: Database
+    ) throws {
+        try persistBusinessDay(day, in: db)
+        try db.execute(
+            sql: """
+            INSERT INTO feature_runtime_state (feature_id, current_day_start_at_ms, updated_at_ms)
+            VALUES (?, ?, ?)
+            ON CONFLICT(feature_id) DO UPDATE SET
+                current_day_start_at_ms = excluded.current_day_start_at_ms,
+                updated_at_ms = excluded.updated_at_ms
+            """,
+            arguments: [day.id.featureID.rawValue, day.id.startAtMilliseconds, updatedAtMilliseconds]
+        )
+    }
+
+    private static func requireRuntimePointer(
+        featureID: FeatureID,
+        startMilliseconds: Int64,
+        db: Database
+    ) throws {
+        let stored = try Int64.fetchOne(
+            db,
+            sql: "SELECT current_day_start_at_ms FROM feature_runtime_state WHERE feature_id = ?",
+            arguments: [featureID.rawValue]
+        )
+        guard stored == startMilliseconds else { throw TimerPersistenceError.staleTransition }
     }
 
     private static func fetchDay(_ day: BusinessDay, db: Database) throws -> TimerDayState {
@@ -308,4 +417,25 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
             ]
         )
     }
+
+    private static func insertSession(_ session: TimerSession, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO timer_sessions
+                (id, task_id, feature_id, day_start_at_ms, started_at_ms, active)
+            VALUES (?, ?, ?, ?, ?, 1)
+            """,
+            arguments: [
+                session.id.uuidString, session.taskID.uuidString,
+                session.businessDayID.featureID.rawValue,
+                session.businessDayID.startAtMilliseconds,
+                session.startedAtMilliseconds,
+            ]
+        )
+    }
+}
+
+private enum TimerPersistenceError: Error {
+    case missingBusinessDay
+    case staleTransition
 }

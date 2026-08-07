@@ -105,6 +105,23 @@ public struct BusinessDayResolver: Sendable {
         return BusinessDay(featureID: featureID, start: boundary, end: resolved.end)
     }
 
+    public func businessDay(
+        preservingStartOf current: BusinessDay,
+        at now: Date,
+        refreshTime: RefreshTime
+    ) -> BusinessDay {
+        let resolved = businessDay(
+            containing: now,
+            featureID: current.id.featureID,
+            refreshTime: refreshTime
+        )
+        return BusinessDay(
+            featureID: current.id.featureID,
+            start: current.start,
+            end: resolved.end
+        )
+    }
+
     private func boundary(onLocalDayStarting dayStart: Date, refreshTime: RefreshTime) -> Date {
         let anchor = dayStart.addingTimeInterval(-1)
         var components = DateComponents()

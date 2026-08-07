@@ -26,6 +26,7 @@ public final class TimerStore {
     @ObservationIgnored private let audio: any AudioNotifying
     @ObservationIgnored private let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     @ObservationIgnored private let onStatisticsModeChanged: @MainActor (TimerStatisticsMode) -> Void
+    @ObservationIgnored private var loadedSnapshotInterval: DateInterval?
 
     private let targetKey = TemporalEventKey("timer.target")
     private let boundaryKey = TemporalEventKey("timer.boundary")
@@ -62,12 +63,9 @@ public final class TimerStore {
                 featureID: .timer,
                 refreshTime: refreshTime
             )
-            dayState = try await repository.loadOrCreateDay(day)
-            snapshots = try await repository.loadSnapshots(
-                from: clock.now().addingTimeInterval(-370 * 86_400).millisecondsSince1970,
-                to: clock.now().addingTimeInterval(32 * 86_400).millisecondsSince1970
-            )
+            dayState = try await repository.loadOrBootstrapCurrentDay(resolvedToday: day)
             try await recoverThroughNow(playSound: false)
+            try await reloadSnapshots(for: clock.now())
             await scheduleEvents()
             errorMessage = nil
         } catch {
@@ -209,14 +207,43 @@ public final class TimerStore {
     }
 
     public func updateRefreshTime(_ refreshTime: RefreshTime) async {
-        self.refreshTime = refreshTime
-        onRefreshTimeChanged(refreshTime)
-        await scheduleEvents()
+        do {
+            try await recoverThroughNow(playSound: false)
+            if let current = dayState {
+                let adjusted = resolver.businessDay(
+                    preservingStartOf: current.businessDay,
+                    at: clock.now(),
+                    refreshTime: refreshTime
+                )
+                try await repository.updateCurrentBusinessDay(adjusted)
+                dayState = TimerDayState(
+                    businessDay: adjusted,
+                    tasks: current.tasks,
+                    activeSession: current.activeSession
+                )
+            }
+            self.refreshTime = refreshTime
+            onRefreshTimeChanged(refreshTime)
+            await scheduleEvents()
+            errorMessage = nil
+        } catch {
+            errorMessage = "Timer 无法更新刷新时间：\(error.localizedDescription)"
+        }
     }
 
     public func updateStatisticsMode(_ mode: TimerStatisticsMode) {
         statisticsMode = mode
         onStatisticsModeChanged(mode)
+    }
+
+    public func loadSnapshots(for displayedMonth: Date) async {
+        do {
+            try await reloadSnapshots(for: displayedMonth)
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = "Timer 月历无法载入：\(error.localizedDescription)"
+        }
     }
 
     public func handleWake() async {
@@ -235,40 +262,46 @@ public final class TimerStore {
         while state.businessDay.end.millisecondsSince1970 <= nowMilliseconds {
             let boundary = state.businessDay.end.millisecondsSince1970
             var continuingTemplateID: UUID?
+            var completion: TimerSessionCompletion?
             if let session = state.activeSession,
                let task = state.tasks.first(where: { $0.id == session.taskID }) {
                 let target = session.startedAtMilliseconds + task.remainingSeconds * 1_000
                 if target <= boundary {
-                    let completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
-                    try await repository.commitCompletion(state: state, completion: completion)
-                    if playSound { await audio.playCompletionSound() }
+                    completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
+                    if shouldPlayCompletionSound(
+                        targetMilliseconds: target,
+                        nowMilliseconds: nowMilliseconds,
+                        playSound: playSound
+                    ) {
+                        await audio.playCompletionSound()
+                    }
                 } else {
                     continuingTemplateID = task.templateID
-                    let completion = try state.pause(atMilliseconds: boundary, reason: .businessDayBoundary)!
-                    try await repository.commitCompletion(state: state, completion: completion)
+                    completion = try state.pause(atMilliseconds: boundary, reason: .businessDayBoundary)!
                 }
             }
 
-            try await repository.saveSnapshot(
-                TimerDailySnapshot(
-                    businessDayID: state.businessDay.id,
-                    completionRatio: state.completionRatio,
-                    completedAtMilliseconds: boundary
-                )
+            let snapshot = TimerDailySnapshot(
+                businessDayID: state.businessDay.id,
+                completionRatio: state.completionRatio,
+                completedAtMilliseconds: boundary
             )
             let nextDay = resolver.businessDay(
                 startingAtBoundary: Date(millisecondsSince1970: boundary),
                 featureID: .timer,
                 refreshTime: refreshTime
             )
-            state = try await repository.loadOrCreateDay(nextDay)
-            if let continuingTemplateID,
-               let nextTask = state.tasks.first(where: { $0.templateID == continuingTemplateID }) {
-                try state.start(taskID: nextTask.id, atMilliseconds: boundary)
-                if let session = state.activeSession {
-                    try await repository.commitStart(state: state, session: session)
-                }
-            }
+            state = try await repository.advanceDay(
+                TimerDayTransition(
+                    settledState: state,
+                    completion: completion,
+                    snapshot: snapshot,
+                    nextDay: nextDay,
+                    continuingTemplateID: continuingTemplateID,
+                    boundaryMilliseconds: boundary
+                )
+            )
+            cache(snapshot)
         }
 
         if let session = state.activeSession,
@@ -277,10 +310,48 @@ public final class TimerStore {
             if target <= nowMilliseconds {
                 let completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
                 try await repository.commitCompletion(state: state, completion: completion)
-                if playSound { await audio.playCompletionSound() }
+                if shouldPlayCompletionSound(
+                    targetMilliseconds: target,
+                    nowMilliseconds: nowMilliseconds,
+                    playSound: playSound
+                ) {
+                    await audio.playCompletionSound()
+                }
             }
         }
         dayState = state
+    }
+
+    private func shouldPlayCompletionSound(
+        targetMilliseconds: Int64,
+        nowMilliseconds: Int64,
+        playSound: Bool
+    ) -> Bool {
+        playSound && (0...2_000).contains(nowMilliseconds - targetMilliseconds)
+    }
+
+    private func cache(_ snapshot: TimerDailySnapshot) {
+        let date = Date(millisecondsSince1970: snapshot.businessDayID.startAtMilliseconds)
+        guard loadedSnapshotInterval?.contains(date) == true else { return }
+        snapshots.removeAll { $0.businessDayID == snapshot.businessDayID }
+        snapshots.append(snapshot)
+        snapshots.sort { $0.businessDayID.startAtMilliseconds < $1.businessDayID.startAtMilliseconds }
+    }
+
+    private func reloadSnapshots(for displayedMonth: Date) async throws {
+        let currentStart = dayState?.businessDay.start ?? clock.now()
+        let grid = CalendarMonthGrid(
+            displaying: displayedMonth,
+            currentBusinessDayStart: currentStart
+        )
+        let interval = grid.snapshotQueryInterval()
+        let loaded = try await repository.loadSnapshots(
+            from: interval.start.millisecondsSince1970,
+            to: interval.end.millisecondsSince1970
+        )
+        try Task.checkCancellation()
+        loadedSnapshotInterval = interval
+        snapshots = loaded
     }
 
     private func scheduleEvents() async {

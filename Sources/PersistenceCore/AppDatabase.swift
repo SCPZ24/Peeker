@@ -8,7 +8,7 @@ public final class AppDatabase: @unchecked Sendable {
     public init(path: String) throws {
         let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        queue = try DatabaseQueue(path: path)
+        queue = try DatabaseQueue(path: path, configuration: Self.configuration)
         try migrate()
     }
 
@@ -18,7 +18,7 @@ public final class AppDatabase: @unchecked Sendable {
     }
 
     public static func inMemory() throws -> AppDatabase {
-        try AppDatabase(queue: DatabaseQueue())
+        try AppDatabase(queue: DatabaseQueue(configuration: configuration))
     }
 
     public static func defaultURL(fileManager: FileManager = .default) throws -> URL {
@@ -126,7 +126,27 @@ public final class AppDatabase: @unchecked Sendable {
                 table.primaryKey(["feature_id", "day_start_at_ms"])
             }
         }
+        migrator.registerMigration("v2-feature-runtime-state") { db in
+            try db.create(table: "feature_runtime_state") { table in
+                table.column("feature_id", .text).primaryKey()
+                table.column("current_day_start_at_ms", .integer).notNull()
+                table.column("updated_at_ms", .integer).notNull()
+                table.foreignKey(
+                    ["feature_id", "current_day_start_at_ms"],
+                    references: "business_days",
+                    columns: ["feature_id", "start_at_ms"]
+                )
+            }
+        }
         try migrator.migrate(queue)
+    }
+
+    private static var configuration: Configuration {
+        var configuration = Configuration()
+        configuration.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA foreign_keys = ON")
+        }
+        return configuration
     }
 }
 

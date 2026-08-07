@@ -86,4 +86,34 @@ final class BusinessDayResolverTests: XCTestCase {
         XCTAssertThrowsError(try RefreshTime(hour: 24, minute: 0))
         XCTAssertThrowsError(try RefreshTime(hour: 0, minute: 60))
     }
+
+    func testRefreshChangeKeepsCurrentStartAndChoosesAnEndStrictlyAfterNow() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Asia/Shanghai"))
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let resolver = BusinessDayResolver(calendar: calendar)
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 7, hour: 0)))
+        let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 7, hour: 10)))
+        let current = BusinessDay(featureID: .timer, start: start, end: start.addingTimeInterval(86_400))
+
+        let movedEarlier = resolver.businessDay(
+            preservingStartOf: current,
+            at: now,
+            refreshTime: try RefreshTime(hour: 6, minute: 0)
+        )
+        let movedLater = resolver.businessDay(
+            preservingStartOf: current,
+            at: now,
+            refreshTime: try RefreshTime(hour: 18, minute: 0)
+        )
+
+        XCTAssertEqual(movedEarlier.start, start)
+        XCTAssertEqual(calendar.component(.day, from: movedEarlier.end), 8)
+        XCTAssertEqual(calendar.component(.hour, from: movedEarlier.end), 6)
+        XCTAssertGreaterThan(movedEarlier.end, now)
+        XCTAssertEqual(movedLater.start, start)
+        XCTAssertEqual(calendar.component(.day, from: movedLater.end), 7)
+        XCTAssertEqual(calendar.component(.hour, from: movedLater.end), 18)
+        XCTAssertGreaterThan(movedLater.end, now)
+    }
 }

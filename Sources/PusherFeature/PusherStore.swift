@@ -29,6 +29,7 @@ public final class PusherStore {
     @ObservationIgnored private var pendingMoveID: UUID?
     @ObservationIgnored private var hasDeferredWake = false
     @ObservationIgnored private var isBoardMutationPending = false
+    @ObservationIgnored private var loadedSnapshotInterval: DateInterval?
     private let boundaryKey = TemporalEventKey("pusher.boundary")
 
     public init(
@@ -60,12 +61,9 @@ public final class PusherStore {
                 featureID: .pusher,
                 refreshTime: refreshTime
             )
-            board = try await repository.loadOrCreateDay(day)
-            snapshots = try await repository.loadSnapshots(
-                from: clock.now().addingTimeInterval(-370 * 86_400).millisecondsSince1970,
-                to: clock.now().addingTimeInterval(32 * 86_400).millisecondsSince1970
-            )
+            board = try await repository.loadOrBootstrapCurrentBoard(resolvedToday: day)
             try await recoverThroughNow()
+            try await reloadSnapshots(for: clock.now())
             await scheduleBoundary()
             errorMessage = nil
         } catch {
@@ -217,14 +215,41 @@ public final class PusherStore {
     }
 
     public func updateRefreshTime(_ refreshTime: RefreshTime) async {
-        self.refreshTime = refreshTime
-        onRefreshTimeChanged(refreshTime)
-        await scheduleBoundary()
+        guard acquireBoardMutation() else { return }
+        do {
+            try await recoverThroughNow()
+            if let current = board {
+                let adjusted = resolver.businessDay(
+                    preservingStartOf: current.businessDay,
+                    at: clock.now(),
+                    refreshTime: refreshTime
+                )
+                try await repository.updateCurrentBusinessDay(adjusted)
+                board = PusherBoard(businessDay: adjusted, tasks: current.allTasks)
+            }
+            self.refreshTime = refreshTime
+            onRefreshTimeChanged(refreshTime)
+            await scheduleBoundary()
+            errorMessage = nil
+        } catch {
+            errorMessage = "Pusher 无法更新刷新时间：\(error.localizedDescription)"
+        }
+        await finishBoardMutation()
     }
 
     public func updateCarryIncomplete(_ enabled: Bool) {
         carryIncomplete = enabled
         onCarryIncompleteChanged(enabled)
+    }
+
+    public func loadSnapshots(for displayedMonth: Date) async {
+        do {
+            try await reloadSnapshots(for: displayedMonth)
+        } catch is CancellationError {
+            return
+        } catch {
+            errorMessage = "Pusher 月历无法载入：\(error.localizedDescription)"
+        }
     }
 
     public func handleWake() async {
@@ -261,11 +286,34 @@ public final class PusherStore {
                 carryIncomplete: carryIncomplete,
                 atMilliseconds: boundary
             )
-            try await repository.saveSnapshot(settlement.snapshot)
-            try await repository.saveBoard(settlement.nextBoard)
-            current = settlement.nextBoard
+            current = try await repository.advanceDay(settlement)
+            cache(settlement.snapshot)
         }
         board = current
+    }
+
+    private func cache(_ snapshot: PusherDailySnapshot) {
+        let date = Date(millisecondsSince1970: snapshot.businessDayID.startAtMilliseconds)
+        guard loadedSnapshotInterval?.contains(date) == true else { return }
+        snapshots.removeAll { $0.businessDayID == snapshot.businessDayID }
+        snapshots.append(snapshot)
+        snapshots.sort { $0.businessDayID.startAtMilliseconds < $1.businessDayID.startAtMilliseconds }
+    }
+
+    private func reloadSnapshots(for displayedMonth: Date) async throws {
+        let currentStart = board?.businessDay.start ?? clock.now()
+        let grid = CalendarMonthGrid(
+            displaying: displayedMonth,
+            currentBusinessDayStart: currentStart
+        )
+        let interval = grid.snapshotQueryInterval()
+        let loaded = try await repository.loadSnapshots(
+            from: interval.start.millisecondsSince1970,
+            to: interval.end.millisecondsSince1970
+        )
+        try Task.checkCancellation()
+        loadedSnapshotInterval = interval
+        snapshots = loaded
     }
 
     private func scheduleBoundary() async {
