@@ -76,7 +76,7 @@ final class SettingsStore {
                 updateState = .current("没有可用的公开版本。")
                 return
             }
-            let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.3"
+            let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.4"
             if let localVersion = SemanticVersion(current),
                let remoteVersion = SemanticVersion(release.version),
                localVersion < remoteVersion {

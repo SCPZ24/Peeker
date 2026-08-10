@@ -21,13 +21,13 @@ swift test --disable-sandbox --disable-automatic-resolution
 bash -n script/*.sh scripts/*.sh Tests/Shell/*.sh
 ./Tests/Shell/build_script_contract.sh
 ./Tests/Shell/release_script_contract.sh
-./scripts/package-release.sh 1.0.3
+./scripts/package-release.sh 1.0.4
 ./scripts/verify-bundle.sh
-./scripts/verify-cask.sh 1.0.3
+./scripts/verify-cask.sh 1.0.4
 ```
 
 Inspect `dist/Peeker.app` in Finder and confirm that it uses `LOGO.png` as its
-icon. Reuse the resulting `dist/Peeker-v1.0.3.zip` for every publication step;
+icon. Reuse the resulting `dist/Peeker-v1.0.4.zip` for every publication step;
 do not rebuild it between computing the checksum and uploading it.
 
 ## GitHub and Homebrew

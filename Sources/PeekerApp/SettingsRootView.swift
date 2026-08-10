@@ -245,7 +245,7 @@ private struct AboutSettingsView: View {
     }
 
     private var version: String {
-        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.3"
+        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.4"
         return "v\(bundleVersion)"
     }
 

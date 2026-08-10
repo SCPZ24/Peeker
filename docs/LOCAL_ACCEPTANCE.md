@@ -22,9 +22,9 @@ swift test --disable-sandbox --disable-automatic-resolution
 bash -n script/*.sh scripts/*.sh
 ./Tests/Shell/build_script_contract.sh
 ./Tests/Shell/feature_boundary_contract.sh
-./scripts/package-release.sh 1.0.3
+./scripts/package-release.sh 1.0.4
 ./scripts/verify-bundle.sh
-./scripts/verify-cask.sh 1.0.3
+./scripts/verify-cask.sh 1.0.4
 ```
 
 The Codex Run action calls `./script/build_and_run.sh`. The generated app is
