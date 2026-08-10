@@ -45,6 +45,7 @@ public struct FunctionCardRegistration: Identifiable {
     public let id: FeatureID
     public let name: String
     public let systemImage: String
+    public let settingsSystemImage: String
     public let defaultOrder: Int
     public let metrics: FunctionCardMetrics
     public let makeCompactLeadingView: () -> AnyView
@@ -56,6 +57,7 @@ public struct FunctionCardRegistration: Identifiable {
         id: FeatureID,
         name: String,
         systemImage: String,
+        settingsSystemImage: String? = nil,
         defaultOrder: Int,
         metrics: FunctionCardMetrics,
         makeCompactLeadingView: @escaping () -> AnyView,
@@ -66,6 +68,7 @@ public struct FunctionCardRegistration: Identifiable {
         self.id = id
         self.name = name
         self.systemImage = systemImage
+        self.settingsSystemImage = settingsSystemImage ?? systemImage
         self.defaultOrder = defaultOrder
         self.metrics = metrics
         self.makeCompactLeadingView = makeCompactLeadingView

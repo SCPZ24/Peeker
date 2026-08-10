@@ -47,7 +47,7 @@ public enum TimerFeatureFactory {
         expandedHeight: 460 * 5 / 7
     )
 
-    public static func make(dependencies: TimerFeatureDependencies) throws -> FunctionCardRegistration {
+    public static func make(dependencies: TimerFeatureDependencies) -> FunctionCardRegistration {
         let store = TimerStore(
             repository: dependencies.repository,
             clock: dependencies.clock,

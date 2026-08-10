@@ -6,9 +6,6 @@ public struct FeatureID: RawRepresentable, Codable, Hashable, Sendable {
     public init(rawValue: String) {
         self.rawValue = rawValue
     }
-
-    public static let timer = FeatureID(rawValue: "timer")
-    public static let pusher = FeatureID(rawValue: "pusher")
 }
 
 public struct BusinessDayID: Codable, Hashable, Sendable {

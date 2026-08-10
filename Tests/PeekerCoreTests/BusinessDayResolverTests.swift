@@ -57,7 +57,7 @@ final class BusinessDayResolverTests: XCTestCase {
 
         let transition = resolver.businessDay(
             startingAtBoundary: oldBoundary,
-            featureID: .timer,
+            featureID: FeatureID(rawValue: "example"),
             refreshTime: try RefreshTime(hour: 6, minute: 0)
         )
 
@@ -75,7 +75,7 @@ final class BusinessDayResolverTests: XCTestCase {
 
         let day = resolver.businessDay(
             containing: noon,
-            featureID: .timer,
+            featureID: FeatureID(rawValue: "example"),
             refreshTime: try RefreshTime(hour: 1, minute: 30)
         )
 
@@ -94,7 +94,11 @@ final class BusinessDayResolverTests: XCTestCase {
         let resolver = BusinessDayResolver(calendar: calendar)
         let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 7, hour: 0)))
         let now = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 7, hour: 10)))
-        let current = BusinessDay(featureID: .timer, start: start, end: start.addingTimeInterval(86_400))
+        let current = BusinessDay(
+            featureID: FeatureID(rawValue: "example"),
+            start: start,
+            end: start.addingTimeInterval(86_400)
+        )
 
         let movedEarlier = resolver.businessDay(
             preservingStartOf: current,

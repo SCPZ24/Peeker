@@ -53,7 +53,7 @@ public enum PusherFeatureFactory {
         expandedHeight: 520 * 5 / 7
     )
 
-    public static func make(dependencies: PusherFeatureDependencies) throws -> FunctionCardRegistration {
+    public static func make(dependencies: PusherFeatureDependencies) -> FunctionCardRegistration {
         let store = PusherStore(
             repository: dependencies.repository,
             clock: dependencies.clock,
@@ -69,6 +69,7 @@ public enum PusherFeatureFactory {
             id: .pusher,
             name: "Pusher",
             systemImage: "rectangle.3.group.fill",
+            settingsSystemImage: "rectangle.3.group",
             defaultOrder: 1,
             metrics: metrics,
             makeCompactLeadingView: { AnyView(PusherCompactLeadingView(store: store)) },

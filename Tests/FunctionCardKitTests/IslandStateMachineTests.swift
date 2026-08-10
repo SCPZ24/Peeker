@@ -106,6 +106,56 @@ final class IslandStateMachineTests: XCTestCase {
     }
 
     @MainActor
+    func testRegistryDefaultsToEveryRegistrationInDefaultOrder() {
+        let pusher = FeatureID(rawValue: "pusher")
+        let registry = CardRegistry(
+            registrations: [makeRegistration(pusher, order: 1), makeRegistration(timer, order: 0)]
+        )
+
+        XCTAssertEqual(registry.enabledIDs, [timer, pusher])
+        XCTAssertEqual(registry.selectedID, timer)
+    }
+
+    @MainActor
+    func testRegistryFiltersUnknownStoredIDsAndFallsBackFromUnknownRecentID() {
+        let unknown = FeatureID(rawValue: "removed")
+        let registry = CardRegistry(
+            registrations: [makeRegistration(timer, order: 0)],
+            enabledIDs: [unknown, timer],
+            recentID: unknown
+        )
+
+        XCTAssertEqual(registry.enabledIDs, [timer])
+        XCTAssertEqual(registry.selectedID, timer)
+    }
+
+    @MainActor
+    func testRegistrationCanPreserveASettingsSpecificIcon() {
+        let registration = FunctionCardRegistration(
+            id: timer,
+            name: "Timer",
+            systemImage: "timer.circle.fill",
+            settingsSystemImage: "timer",
+            defaultOrder: 0,
+            metrics: FunctionCardMetrics(
+                compactWidth: 140,
+                compactHeight: 38,
+                compactLeadingWidth: 50,
+                compactTrailingWidth: 50,
+                expandedWidth: 600,
+                expandedHeight: 400
+            ),
+            makeCompactLeadingView: { AnyView(EmptyView()) },
+            makeCompactTrailingView: { AnyView(EmptyView()) },
+            makeExpandedView: { AnyView(EmptyView()) },
+            makeSettingsView: { AnyView(EmptyView()) }
+        )
+
+        XCTAssertEqual(registration.systemImage, "timer.circle.fill")
+        XCTAssertEqual(registration.settingsSystemImage, "timer")
+    }
+
+    @MainActor
     func testClearingPopoverOutsideIslandSchedulesCollapse() async {
         let registry = CardRegistry(registrations: [makeRegistration(timer, order: 0)])
         let coordinator = IslandCoordinator(registry: registry)

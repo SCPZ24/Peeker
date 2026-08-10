@@ -3,40 +3,31 @@ import SwiftUI
 import PeekerCore
 import FunctionCardKit
 
-private enum SettingsPage: String, CaseIterable, Identifiable {
-    case general = "通用"
-    case cards = "功能卡"
-    case timer = "Timer"
-    case pusher = "Pusher"
-    case about = "关于"
-
-    var id: String { rawValue }
-
-    var systemImage: String {
-        switch self {
-        case .general: "gearshape"
-        case .cards: "square.grid.2x2"
-        case .timer: "timer"
-        case .pusher: "rectangle.3.group"
-        case .about: "info.circle"
-        }
-    }
-}
-
 struct SettingsRootView: View {
     let runtime: AppRuntime
-    @State private var selection: SettingsPage? = .general
+    @State private var selection: SettingsDestination? = .general
 
     var body: some View {
         NavigationSplitView {
-            List(SettingsPage.allCases, selection: $selection) { page in
-                Label(page.rawValue, systemImage: page.systemImage).tag(page)
+            List(selection: $selection) {
+                ForEach(
+                    SettingsNavigation.destinations(
+                        registrations: runtime.registry.registrations
+                    ),
+                    id: \.self
+                ) { destination in
+                    Label(
+                        title(for: destination),
+                        systemImage: systemImage(for: destination)
+                    )
+                    .tag(destination)
+                }
             }
             .listStyle(.sidebar)
             .navigationTitle("Peeker 设置")
         } detail: {
             settingsPage
-                .navigationTitle(selection?.rawValue ?? "Peeker")
+                .navigationTitle(title(for: resolvedSelection))
                 .frame(minWidth: 560, minHeight: 420)
         }
         .frame(width: 760, height: 520)
@@ -50,17 +41,42 @@ struct SettingsRootView: View {
 
     @ViewBuilder
     private var settingsPage: some View {
-        switch selection ?? .general {
+        switch resolvedSelection {
         case .general:
             GeneralSettingsView(store: runtime.settingsStore)
         case .cards:
             CardSettingsView(registry: runtime.registry)
-        case .timer:
-            runtime.registry.registrations.first(where: { $0.id == .timer })?.makeSettingsView()
-        case .pusher:
-            runtime.registry.registrations.first(where: { $0.id == .pusher })?.makeSettingsView()
+        case let .feature(id):
+            runtime.registry.registrations.first(where: { $0.id == id })?.makeSettingsView()
         case .about:
             AboutSettingsView(store: runtime.settingsStore)
+        }
+    }
+
+    private var resolvedSelection: SettingsDestination {
+        SettingsNavigation.resolve(
+            selection: selection ?? .general,
+            registrations: runtime.registry.registrations
+        )
+    }
+
+    private func title(for destination: SettingsDestination) -> String {
+        switch destination {
+        case .general: "通用"
+        case .cards: "功能卡"
+        case let .feature(id):
+            runtime.registry.registrations.first(where: { $0.id == id })?.name ?? "功能卡"
+        case .about: "关于"
+        }
+    }
+
+    private func systemImage(for destination: SettingsDestination) -> String {
+        switch destination {
+        case .general: "gearshape"
+        case .cards: "square.grid.2x2"
+        case let .feature(id):
+            runtime.registry.registrations.first(where: { $0.id == id })?.settingsSystemImage ?? "square"
+        case .about: "info.circle"
         }
     }
 }

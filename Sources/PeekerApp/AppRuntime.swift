@@ -2,12 +2,9 @@ import AppKit
 import SwiftUI
 import PeekerCore
 import FunctionCardKit
-import TimerFeature
-import PusherFeature
 import PersistenceCore
-import TimerGRDBAdapter
-import PusherGRDBAdapter
 import MacPlatform
+import FeatureRuntimeKit
 
 @MainActor
 final class AppRuntime {
@@ -40,110 +37,83 @@ final class AppRuntime {
         launchAtLogin = LaunchAtLoginManager()
         updateChecker = GitHubReleaseChecker()
 
-        let timerRepository: any TimerRepository
-        let pusherRepository: any PusherRepository
+        let catalog: FunctionCardModuleCatalog
+        do {
+            catalog = try FunctionCardModuleCatalog(modules: BuiltInFeatureModules.all)
+        } catch {
+            preconditionFailure("Built-in feature catalog is invalid: \(error)")
+        }
+
+        let persistence: Result<AppDatabase, StartupPersistenceError>
         let startupError: String?
         do {
-            let database = try AppDatabase(path: AppDatabase.defaultURL().path)
-            timerRepository = TimerGRDBRepository(database: database)
-            pusherRepository = PusherGRDBRepository(database: database)
+            let database = try AppDatabase(
+                path: AppDatabase.defaultURL().path,
+                featureMigrations: catalog.databaseMigrations
+            )
+            persistence = .success(database)
             startupError = nil
         } catch {
-            let message = "无法打开 Peeker.sqlite：\(error.localizedDescription)。原数据库未被修改，请检查文件权限或迁移错误后重试。"
-            let unavailable = StartupPersistenceError(message: message)
-            timerRepository = UnavailableTimerRepository(error: unavailable)
-            pusherRepository = UnavailablePusherRepository(error: unavailable)
+            let message = "无法打开 Peeker.sqlite：\(error.localizedDescription)。Peeker 不会主动删除业务数据；请检查文件权限或迁移错误后重试。"
+            persistence = .failure(StartupPersistenceError(message: message))
             startupError = message
         }
 
         let clock = SystemClock()
         let scheduler = DispatchTemporalScheduler()
         eventHub = TemporalEventHub(clock: clock, scheduler: scheduler)
-        let resolver = BusinessDayResolver()
-        let coordinatorBox = WeakCoordinatorBox()
+        let hostActionsBridge = FunctionCardHostActionsBridge()
+        let context = FunctionCardModuleContext(
+            persistence: persistence,
+            clock: clock,
+            resolver: BusinessDayResolver(),
+            eventHub: eventHub,
+            audio: SystemAudioNotifier(),
+            preferences: FeaturePreferenceStore(),
+            hostActions: hostActionsBridge.actions
+        )
+        let cards = catalog.makeRegistrations(context: context)
+        let configuredEnabled = Set(preferences.enabledCardIDs)
+        let orderedEnabled = preferences.cardOrder.filter(configuredEnabled.contains)
+        registry = CardRegistry(
+            registrations: cards,
+            enabledIDs: orderedEnabled,
+            recentID: preferences.recentCardID,
+            onChange: { [preferences] enabled, recent in
+                preferences.saveCards(enabled: enabled, recent: recent)
+            }
+        )
+        islandCoordinator = IslandCoordinator(registry: registry)
+        hostActionsBridge.attach(to: islandCoordinator)
 
-        do {
-            let timerCard = try TimerFeatureFactory.make(
-                dependencies: TimerFeatureDependencies(
-                    repository: timerRepository,
-                    clock: clock,
-                    resolver: resolver,
-                    eventHub: eventHub,
-                    audio: SystemAudioNotifier(),
-                    refreshTime: preferences.timerRefreshTime,
-                    statisticsMode: TimerStatisticsMode(rawValue: preferences.timerStatisticsModeRawValue) ?? .progress,
-                    onRefreshTimeChanged: { [preferences] value in
-                        preferences.saveTimerRefreshTime(value)
-                    },
-                    onStatisticsModeChanged: { [preferences] value in
-                        preferences.timerStatisticsModeRawValue = value.rawValue
-                    }
-                )
-            )
-            let pusherCard = try PusherFeatureFactory.make(
-                dependencies: PusherFeatureDependencies(
-                    repository: pusherRepository,
-                    clock: clock,
-                    resolver: resolver,
-                    eventHub: eventHub,
-                    carryIncomplete: preferences.pusherCarryIncomplete,
-                    refreshTime: preferences.pusherRefreshTime,
-                    setPopoverPresented: { coordinatorBox.value?.setPopoverPresented($0) },
-                    setDragging: { coordinatorBox.value?.setDragging($0) },
-                    setEditingText: { coordinatorBox.value?.setEditingText($0) },
-                    onRefreshTimeChanged: { [preferences] value in
-                        preferences.savePusherRefreshTime(value)
-                    },
-                    onCarryIncompleteChanged: { [preferences] value in
-                        preferences.pusherCarryIncomplete = value
-                    }
-                )
-            )
+        let islandDisplayContext = IslandDisplayContext()
+        settingsStore = SettingsStore(
+            preferences: preferences,
+            screens: screens,
+            launchAtLogin: launchAtLogin,
+            updateChecker: updateChecker,
+            startupError: startupError
+        )
 
-            let cards = [timerCard, pusherCard]
-            let configuredEnabled = Set(preferences.enabledCardIDs)
-            let orderedEnabled = preferences.cardOrder.filter(configuredEnabled.contains)
-            registry = CardRegistry(
-                registrations: cards,
-                enabledIDs: orderedEnabled,
-                recentID: preferences.recentCardID,
-                onChange: { [preferences] enabled, recent in
-                    preferences.saveCards(enabled: enabled, recent: recent)
-                }
-            )
-            islandCoordinator = IslandCoordinator(registry: registry)
-            coordinatorBox.value = islandCoordinator
-            let islandDisplayContext = IslandDisplayContext()
-            settingsStore = SettingsStore(
-                preferences: preferences,
-                screens: screens,
-                launchAtLogin: launchAtLogin,
-                updateChecker: updateChecker,
-                startupError: startupError
-            )
-
-            let rootView = AnyView(
-                IslandHostView(
-                    coordinator: islandCoordinator,
-                    displayContext: islandDisplayContext,
-                    settingsRouter: settingsPresentationRouter
-                )
-            )
-            panelController = IslandPanelController(
+        let rootView = AnyView(
+            IslandHostView(
                 coordinator: islandCoordinator,
                 displayContext: islandDisplayContext,
-                rootView: rootView,
-                screens: screens,
-                targetScreenID: preferences.targetScreenID,
-                didFallbackScreen: { [preferences] id in
-                    preferences.targetScreenID = id
-                }
+                settingsRouter: settingsPresentationRouter
             )
-            settingsStore.didSelectScreen = { [weak panelController] id in
-                panelController?.setTargetScreenID(id)
+        )
+        panelController = IslandPanelController(
+            coordinator: islandCoordinator,
+            displayContext: islandDisplayContext,
+            rootView: rootView,
+            screens: screens,
+            targetScreenID: preferences.targetScreenID,
+            didFallbackScreen: { [preferences] id in
+                preferences.targetScreenID = id
             }
-        } catch {
-            preconditionFailure("Built-in feature factories must remain non-failing: \(error)")
+        )
+        settingsStore.didSelectScreen = { [weak panelController] id in
+            panelController?.setTargetScreenID(id)
         }
     }
 
@@ -170,9 +140,4 @@ final class AppRuntime {
     func openSettings() {
         settingsPresentationRouter.requestOpen()
     }
-}
-
-@MainActor
-private final class WeakCoordinatorBox {
-    weak var value: IslandCoordinator?
 }

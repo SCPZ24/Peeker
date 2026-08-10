@@ -2,23 +2,61 @@ import Foundation
 import GRDB
 import PeekerCore
 
+public enum AppDatabaseMigrationError: Error, Equatable {
+    case duplicateIdentifier(String)
+}
+
+public struct AppDatabaseMigration: Sendable {
+    public let id: String
+    private let action: @Sendable (Database) throws -> Void
+
+    public init(
+        id: String,
+        migrate: @escaping @Sendable (Database) throws -> Void
+    ) {
+        self.id = id
+        self.action = migrate
+    }
+
+    fileprivate func run(in database: Database) throws {
+        try action(database)
+    }
+}
+
 public final class AppDatabase: @unchecked Sendable {
     public let queue: DatabaseQueue
+    private let featureMigrations: [AppDatabaseMigration]
 
-    public init(path: String) throws {
+    public init(
+        path: String,
+        featureMigrations: [AppDatabaseMigration] = []
+    ) throws {
+        try Self.validate(featureMigrations: featureMigrations)
         let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        self.featureMigrations = featureMigrations
         queue = try DatabaseQueue(path: path, configuration: Self.configuration)
         try migrate()
     }
 
-    private init(queue: DatabaseQueue) throws {
+    private init(
+        queue: DatabaseQueue,
+        featureMigrations: [AppDatabaseMigration]
+    ) throws {
+        try Self.validate(featureMigrations: featureMigrations)
         self.queue = queue
+        self.featureMigrations = featureMigrations
         try migrate()
     }
 
-    public static func inMemory() throws -> AppDatabase {
-        try AppDatabase(queue: DatabaseQueue(configuration: configuration))
+    public static func inMemory(
+        featureMigrations: [AppDatabaseMigration] = []
+    ) throws -> AppDatabase {
+        try validate(featureMigrations: featureMigrations)
+        return try AppDatabase(
+            queue: DatabaseQueue(configuration: configuration),
+            featureMigrations: featureMigrations
+        )
     }
 
     public static func defaultURL(fileManager: FileManager = .default) throws -> URL {
@@ -33,6 +71,7 @@ public final class AppDatabase: @unchecked Sendable {
     }
 
     public func migrate() throws {
+        try Self.validate(featureMigrations: featureMigrations)
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in
             try db.create(table: "business_days") { table in
@@ -40,90 +79,6 @@ public final class AppDatabase: @unchecked Sendable {
                 table.column("start_at_ms", .integer).notNull()
                 table.column("end_at_ms", .integer).notNull()
                 table.primaryKey(["feature_id", "start_at_ms"])
-            }
-
-            try db.create(table: "timer_templates") { table in
-                table.column("id", .text).primaryKey()
-                table.column("name", .text).notNull()
-                table.column("target_seconds", .integer).notNull()
-                table.column("color_hex", .text).notNull()
-                table.column("position", .integer).notNull()
-                table.column("updated_at_ms", .integer).notNull()
-            }
-
-            try db.create(table: "timer_day_instances") { table in
-                table.column("id", .text).primaryKey()
-                table.column("template_id", .text).notNull()
-                table.column("feature_id", .text).notNull()
-                table.column("day_start_at_ms", .integer).notNull()
-                table.column("name", .text).notNull()
-                table.column("target_seconds", .integer).notNull()
-                table.column("color_hex", .text).notNull()
-                table.column("position", .integer).notNull()
-                table.column("accumulated_seconds", .integer).notNull().defaults(to: 0)
-                table.column("status", .text).notNull()
-                table.column("last_action_at_ms", .integer)
-                table.column("visible", .boolean).notNull().defaults(to: true)
-                table.uniqueKey(["template_id", "feature_id", "day_start_at_ms"])
-            }
-
-            try db.create(table: "timer_sessions") { table in
-                table.column("id", .text).primaryKey()
-                table.column("task_id", .text).notNull()
-                table.column("feature_id", .text).notNull()
-                table.column("day_start_at_ms", .integer).notNull()
-                table.column("started_at_ms", .integer).notNull()
-                table.column("ended_at_ms", .integer)
-                table.column("credited_seconds", .integer)
-                table.column("end_reason", .text)
-                table.column("active", .boolean).notNull().defaults(to: true)
-            }
-            try db.execute(
-                sql: "CREATE UNIQUE INDEX timer_one_active_session ON timer_sessions(active) WHERE active = 1"
-            )
-
-            try db.create(table: "timer_daily_snapshots") { table in
-                table.column("feature_id", .text).notNull()
-                table.column("day_start_at_ms", .integer).notNull()
-                table.column("completion_ratio", .double)
-                table.column("completed_at_ms", .integer).notNull()
-                table.primaryKey(["feature_id", "day_start_at_ms"])
-            }
-
-            try db.create(table: "pusher_series") { table in
-                table.column("id", .text).primaryKey()
-                table.column("title", .text).notNull()
-                table.column("urgency", .text).notNull()
-                table.column("active", .boolean).notNull().defaults(to: true)
-                table.column("updated_at_ms", .integer).notNull()
-            }
-
-            try db.create(table: "pusher_tasks") { table in
-                table.column("id", .text).primaryKey()
-                table.column("series_id", .text)
-                table.column("feature_id", .text).notNull()
-                table.column("day_start_at_ms", .integer).notNull()
-                table.column("title", .text).notNull()
-                table.column("urgency", .text).notNull()
-                table.column("status", .text).notNull()
-                table.column("position", .integer).notNull()
-                table.column("created_at_ms", .integer).notNull()
-                table.column("updated_at_ms", .integer).notNull()
-                table.column("archived", .boolean).notNull().defaults(to: false)
-            }
-            try db.create(
-                index: "pusher_tasks_day_status_position",
-                on: "pusher_tasks",
-                columns: ["feature_id", "day_start_at_ms", "status", "position"]
-            )
-
-            try db.create(table: "pusher_daily_snapshots") { table in
-                table.column("feature_id", .text).notNull()
-                table.column("day_start_at_ms", .integer).notNull()
-                table.column("done_count", .integer).notNull()
-                table.column("total_count", .integer).notNull()
-                table.column("completed_at_ms", .integer).notNull()
-                table.primaryKey(["feature_id", "day_start_at_ms"])
             }
         }
         migrator.registerMigration("v2-feature-runtime-state") { db in
@@ -138,7 +93,23 @@ public final class AppDatabase: @unchecked Sendable {
                 )
             }
         }
+        for migration in featureMigrations {
+            migrator.registerMigration(migration.id) { database in
+                try migration.run(in: database)
+            }
+        }
         try migrator.migrate(queue)
+    }
+
+    private static func validate(
+        featureMigrations: [AppDatabaseMigration]
+    ) throws {
+        var identifiers = Set(["v1", "v2-feature-runtime-state"])
+        for migration in featureMigrations {
+            guard identifiers.insert(migration.id).inserted else {
+                throw AppDatabaseMigrationError.duplicateIdentifier(migration.id)
+            }
+        }
     }
 
     private static var configuration: Configuration {
