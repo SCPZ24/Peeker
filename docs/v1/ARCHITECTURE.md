@@ -1,6 +1,8 @@
-# Peeker Architecture
+# Peeker v1 Architecture
 
-Peeker is a single-process, Swift-native modular monolith. SwiftUI owns view state and rendering; AppKit is restricted to the floating panel, display topology, input monitors, login items, system audio, and feature-owned UI bridges.
+> Historical architecture of the implemented v1 codebase. The planned Scheduler, CLI IPC, resting island, and prompt queue are specified by [`docs/v2/PRD.md`](../v2/PRD.md) and are not part of this graph.
+
+Peeker v1 is a single-process, Swift-native modular monolith. SwiftUI owns view state and rendering; AppKit is restricted to the floating panel, display topology, input monitors, login items, system audio, and feature-owned UI bridges.
 
 ## Dependency graph
 

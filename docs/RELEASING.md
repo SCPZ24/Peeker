@@ -30,6 +30,21 @@ Inspect `dist/Peeker.app` in Finder and confirm that it uses `LOGO.png` as its
 icon. Reuse the resulting `dist/Peeker-v1.0.4.zip` for every publication step;
 do not rebuild it between computing the checksum and uploading it.
 
+## v2+ CLI release gate
+
+This section applies only after the v2 CLI described by [`docs/v2/PRD.md`](v2/PRD.md) has been implemented. It does not claim that current v1 Casks contain a CLI.
+
+For v2 and later, the release bundle and Cask must:
+
+- keep the main App executable named `Peeker`;
+- include a physically distinct CLI executable such as `peeker-cli` inside the App bundle;
+- install that executable through the Cask under command name `peeker`;
+- verify that `peeker --version` emits the documented JSON schema;
+- verify that `peeker status` exits `0` and reports `running:false` before the App starts, then reports the running App and matching protocol version after launch;
+- verify that a module command fails with `app_not_running` rather than opening SQLite or starting the App when Peeker is not running.
+
+The v2 verification scripts must inspect both the App artifact and the Cask command mapping before publication.
+
 ## GitHub and Homebrew
 
 Create the annotated tag and GitHub Release only after the local gate passes.

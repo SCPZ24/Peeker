@@ -1,4 +1,6 @@
-# Local acceptance
+# Local acceptance (current v1 implementation)
+
+> This checklist validates the implemented v1 bundle. It intentionally retains v1 compact surfaces and Timer sound checks. After v2 is implemented, run these regression checks together with the incremental acceptance criteria in [`docs/v2/PRD.md`](v2/PRD.md); do not treat this file as the v2 behavior specification.
 
 These checks validate the same application bundle used by GitHub Releases and
 the project Homebrew Tap. They do not publish or mutate remote state.

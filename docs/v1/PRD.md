@@ -1,6 +1,6 @@
 # Peeker v1 产品需求文档
 
-> 文档状态：已确认，可用于设计、开发和验收
+> 文档状态：v1 历史事实来源；当前 v2 设计不会反向修改本文件
 >
 > 目标版本：v1
 >
@@ -8,7 +8,7 @@
 >
 > 最后更新：2026-08-03
 
-本文档是 Peeker v1 的需求事实来源。`docs/concept.md` 用于描述高层概念；当概念文档、功能文档与本文档存在细节差异时，以本文档为准。Timer 与 Pusher 的功能细节分别同步维护在 `docs/functions/timer.md` 和 `docs/functions/pusher.md`。
+本文档是 Peeker v1 的自包含需求事实来源。[v1 概念文档](concept.md)只描述高层概念；发生差异时以本文档为准。`docs/functions/` 现描述 v2 目标行为，不再与本文件同步，也不得用于反向解释 v1。v2 增量规则见 [v2 PRD](../v2/PRD.md)。
 
 ## 1. 产品概述
 
@@ -185,7 +185,7 @@ v1 定义仅供 Peeker 内部使用的 `FunctionCard` 概念接口。它是源�
 
 ## 7. Timer 功能卡
 
-Timer 用于累计每日目标事项的真实投入时间。详细规则见 `docs/functions/timer.md`。
+Timer 用于累计每日目标事项的真实投入时间。本节是 v1 Timer 行为的历史规范；最新模块文档描述 v2，不适用于 v1 验收。
 
 ### 7.1 配置与数据
 
@@ -233,7 +233,7 @@ Timer 设置包括：
 
 ## 8. Pusher 功能卡
 
-Pusher 用于管理当前业务日需要规划、推进和完成的事项。详细规则见 `docs/functions/pusher.md`。
+Pusher 用于管理当前业务日需要规划、推进和完成的事项。本节是 v1 Pusher 行为的历史规范；最新模块文档描述 v2，不适用于 v1 验收。
 
 ### 8.1 配置与数据
 

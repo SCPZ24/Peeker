@@ -1,43 +1,36 @@
-# 产品概念文档
+# Peeker v1 产品概念
 
+> 文档状态：v1 历史概念。可验收规则以 [v1 PRD](PRD.md) 为准；v2 方向见 [v2 概念](../v2/concept.md)。
 
-> 一个只适配MacOS的灵动岛应用。
-
+Peeker v1 是只适配 macOS 的顶部灵动岛应用。
 
 技术栈：
-- 桌面应用：SwiftUI
-- 后端：Swift
-- 分发：brew
 
-最终产品是一个应用程序而不是一个web项目或是CLI/TUI工具。
-当前，我们接受用户安装(brew --cask install)并首次启动时，被MacOS系统弹出“未受信任”警告。
+- 桌面应用：SwiftUI；
+- 业务与平台逻辑：Swift；
+- 分发：Homebrew Cask。
 
+v1 的最终产品是原生 App，不是 Web、CLI 或 TUI。用户通过 `brew install --cask SCPZ24/peeker/peeker` 安装；当前分发接受首次启动时由 macOS 显示未受信任警告，并要求用户在系统设置中手动放行。
 
-第一版产品分为两个页面
-- 灵动岛（dynamic island）
-- 设置页
+v1 包含两个主要界面：
 
+- 顶部灵动岛；
+- 设置窗口。
 
 ## 灵动岛
 
-整个灵动岛的视觉设计参考[Ebullioscopic/Atoll](https://github.com/Ebullioscopic/Atoll)。
+灵动岛平时显示收敛摘要，鼠标移入后展开。展开态通过顶部标签在 Timer 和 Pusher 功能卡之间切换。
 
-1. 一个灵动岛，平时处于收敛显示状态，用户鼠标移动到岛上后展开详细状态。
+Atoll 只作为公开交互参考；许可证和独立实现边界以 v1 PRD 为准。
 
-2. 灵动岛展开后分为多个功能卡，通过顶部选项卡调节当前所处的功能卡页面。
+## 设置窗口
 
+设置窗口用于：
 
-## 设置页
+1. 检查更新、退出应用、选择显示器和管理登录启动；
+2. 启用、禁用和排序功能卡；
+3. 编辑 Timer 与 Pusher 的功能配置。
 
-设置页上可以做
+## 本地数据
 
-1. 检查更新和退出应用
-
-2. 选中启用，排序启用中的功能卡，以及完成功能卡详情设置。
-
-功能卡的设计放在docs/functions/。
-
-
-## 后端
-
-负责SQLite的CRUD以及其他service逻辑。
+SQLite 保存任务、会话、业务日与快照，系统 Preferences 保存轻量配置。业务服务和数据访问位于 App 进程内。
