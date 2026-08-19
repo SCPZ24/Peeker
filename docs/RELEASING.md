@@ -1,66 +1,60 @@
 # Releasing Peeker
 
-Peeker releases are Apple Silicon-only, require macOS 26 or later, and are
-distributed through GitHub Releases and `SCPZ24/homebrew-peeker`. The app is
-ad-hoc signed and is not notarized.
+Peeker is Apple Silicon-only, requires macOS 26 or later, and is distributed through GitHub Releases and `SCPZ24/homebrew-peeker`. Local builds are ad-hoc signed and unnotarized unless a Developer ID identity is explicitly supplied.
 
 ## Version contract
 
-`Resources/Info.plist` is the source of truth. Before releasing, set
-`CFBundleShortVersionString` to the intended three-component version. The tag,
-archive name, GitHub Release, app bundle and Cask must all use that exact value.
-Published release assets are immutable; ship a patch version instead of
-replacing an existing ZIP.
+`Resources/Info.plist` is the Bundle source of truth. The App Bundle, embedded CLI, tag, archive name, GitHub Release, and Cask must use the same three-component version. v2 protocol and JSON schema are both version `1`.
 
-## Local release gate
+## v2 local gate
 
 ```bash
 swift package describe
 swift build --disable-sandbox --disable-automatic-resolution
+swift build --disable-sandbox --disable-automatic-resolution -c release
 swift test --disable-sandbox --disable-automatic-resolution
 bash -n script/*.sh scripts/*.sh Tests/Shell/*.sh
 ./Tests/Shell/build_script_contract.sh
+./Tests/Shell/feature_boundary_contract.sh
 ./Tests/Shell/release_script_contract.sh
-./scripts/package-release.sh 1.0.4
-./scripts/verify-bundle.sh
-./scripts/verify-cask.sh 1.0.4
+plutil -lint Resources/Info.plist Resources/Peeker.entitlements
+./scripts/build-app.sh release
+./scripts/verify-bundle.sh dist/Peeker.app 2.0.0
 ```
 
-Inspect `dist/Peeker.app` in Finder and confirm that it uses `LOGO.png` as its
-icon. Reuse the resulting `dist/Peeker-v1.0.4.zip` for every publication step;
-do not rebuild it between computing the checksum and uploading it.
+For local implementation acceptance, create a temporary archive under `.build/verification/` and run `verify-cask.sh` against it. Do not create `dist/Peeker-v2.0.0.zip` unless a formal release is explicitly authorized.
 
-## v2+ CLI release gate
+The Bundle gate verifies:
 
-This section applies only after the v2 CLI described by [`docs/v2/PRD.md`](v2/PRD.md) has been implemented. It does not claim that current v1 Casks contain a CLI.
+- main executable `Contents/MacOS/Peeker`;
+- physically distinct `Contents/MacOS/peeker-cli`;
+- arm64-only binaries;
+- CLI schema `1`, version `2.0.0`, protocol `1`;
+- valid whole-Bundle signature.
 
-For v2 and later, the release bundle and Cask must:
+The Cask must map the embedded physical executable to user command `peeker`:
 
-- keep the main App executable named `Peeker`;
-- include a physically distinct CLI executable such as `peeker-cli` inside the App bundle;
-- install that executable through the Cask under command name `peeker`;
-- verify that `peeker --version` emits the documented JSON schema;
-- verify that `peeker status` exits `0` and reports `running:false` before the App starts, then reports the running App and matching protocol version after launch;
-- verify that a module command fails with `app_not_running` rather than opening SQLite or starting the App when Peeker is not running.
-
-The v2 verification scripts must inspect both the App artifact and the Cask command mapping before publication.
-
-## GitHub and Homebrew
-
-Create the annotated tag and GitHub Release only after the local gate passes.
-Upload both the ZIP and its `.sha256` file. Render `Casks/peeker.rb` from the
-same ZIP, commit it to `SCPZ24/homebrew-peeker`, then verify a public install:
-
-```bash
-brew install --cask SCPZ24/peeker/peeker
-brew upgrade --cask peeker
+```ruby
+binary "#{appdir}/Peeker.app/Contents/MacOS/peeker-cli", target: "peeker"
 ```
+
+Before App launch, verify `status` returns `running:false` and feature commands return `app_not_running` without creating SQLite. After launch, verify status and the three feature config routes.
+
+## Future publication
+
+Only after local and manual acceptance are complete:
+
+1. Run `./scripts/package-release.sh 2.0.0` once to create the immutable formal archive.
+2. Verify Bundle, checksum, Cask syntax/style, and public command mapping.
+3. Create the annotated tag and GitHub Release.
+4. Upload the exact ZIP and `.sha256`.
+5. Update the external Homebrew Tap from the same ZIP checksum.
+6. Verify public install and upgrade.
+
+None of those remote actions are part of the current v2 implementation task.
 
 ## First launch / 首次启动
 
-After macOS blocks the first launch, open **System Settings → Privacy &
-Security**, choose **Open Anyway** for Peeker, then confirm **Open**.
+After macOS blocks the first launch, open **System Settings → Privacy & Security**, choose **Open Anyway**, then confirm **Open**. Do not disable Gatekeeper.
 
-首次启动被 macOS 拦截后，请打开**系统设置 → 隐私与安全**，为 Peeker 选择
-**仍要打开**，再确认**打开**。不要关闭 Gatekeeper，也不要移除系统的 quarantine
-保护。
+首次启动被拦截后，请打开**系统设置 → 隐私与安全**，选择**仍要打开**并确认。不要关闭 Gatekeeper。
