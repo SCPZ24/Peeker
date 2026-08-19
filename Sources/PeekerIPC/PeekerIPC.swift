@@ -225,6 +225,7 @@ public final class PeekerIPCServer: @unchecked Sendable {
     private let handler: Handler
     private let lock = NSLock()
     private var descriptor: Int32 = -1
+    private var ownsSocket = false
     private var acceptTask: Task<Void, Never>?
 
     public init(socketURL: URL = PeekerIPCPaths.socketURL(), handler: @escaping Handler) {
@@ -266,6 +267,7 @@ public final class PeekerIPCServer: @unchecked Sendable {
             throw PeekerIPCError.unavailable(message)
         }
         descriptor = serverDescriptor
+        ownsSocket = true
         acceptTask = Task.detached { [weak self] in self?.acceptLoop(serverDescriptor) }
     }
 
@@ -273,6 +275,8 @@ public final class PeekerIPCServer: @unchecked Sendable {
         lock.lock()
         let activeDescriptor = descriptor
         descriptor = -1
+        let shouldRemoveSocket = ownsSocket
+        ownsSocket = false
         let task = acceptTask
         acceptTask = nil
         lock.unlock()
@@ -281,7 +285,7 @@ public final class PeekerIPCServer: @unchecked Sendable {
             _ = Darwin.shutdown(activeDescriptor, SHUT_RDWR)
             _ = Darwin.close(activeDescriptor)
         }
-        try? FileManager.default.removeItem(at: socketURL)
+        if shouldRemoveSocket { try? FileManager.default.removeItem(at: socketURL) }
     }
 
     private func acceptLoop(_ serverDescriptor: Int32) {

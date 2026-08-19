@@ -29,7 +29,7 @@ final class PeekerIPCTests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
-    func testServerRemovesStaleSocketButDoesNotReplaceActiveServer() throws {
+    func testServerRemovesStaleSocketButDoesNotReplaceActiveServer() async throws {
         let socket = temporarySocket()
         try FileManager.default.createDirectory(
             at: socket.deletingLastPathComponent(),
@@ -40,10 +40,15 @@ final class PeekerIPCTests: XCTestCase {
         try first.start()
         defer { first.stop() }
 
-        let second = PeekerIPCServer(socketURL: socket) { _ in .success() }
-        XCTAssertThrowsError(try second.start()) { error in
-            XCTAssertEqual(error as? PeekerIPCError, .activeServer)
+        do {
+            let second = PeekerIPCServer(socketURL: socket) { _ in .success() }
+            XCTAssertThrowsError(try second.start()) { error in
+                XCTAssertEqual(error as? PeekerIPCError, .activeServer)
+            }
         }
+
+        let envelope = try await PeekerIPCClient(socketURL: socket).request(.status)
+        XCTAssertTrue(envelope.ok)
     }
 
     func testMissingSocketIsAppNotRunning() async {
