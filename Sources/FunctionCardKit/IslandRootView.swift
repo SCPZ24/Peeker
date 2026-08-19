@@ -19,11 +19,15 @@ public struct IslandRootView: View {
     public var body: some View {
         let interactivity = IslandContentInteractivity(isExpanded: coordinator.isExpanded)
         let surface = coordinator.surfaceDescription
+        let isResting = surfaceIsResting(surface)
 
         ZStack(alignment: .top) {
             ZStack {
                 expandedContent
-                    .opacity(displayContext.expansionTarget)
+                    .opacity(IslandContentTransition.expandedOpacity(
+                        expansion: displayContext.expansionTarget,
+                        isResting: isResting
+                    ))
                     .allowsHitTesting(interactivity.expandedAllowsHitTesting)
                     .accessibilityHidden(!interactivity.expandedAllowsHitTesting)
 
@@ -36,7 +40,7 @@ public struct IslandRootView: View {
             .onGeometryChange(for: CGSize.self) { $0.size } action: {
                 displayContext.updatePresentationSurfaceSize($0)
             }
-            .background(surfaceDrawsBlack(surface) ? Color.black : Color.clear)
+            .background(displayContext.drawsBlackSurface ? Color.black : Color.clear)
             .clipShape(surfaceShape)
             .foregroundStyle(.white)
             .contentShape(Rectangle())
@@ -145,9 +149,9 @@ public struct IslandRootView: View {
         }
     }
 
-    private func surfaceDrawsBlack(_ surface: IslandSurfaceDescription) -> Bool {
-        if case .resting = surface { return false }
-        return true
+    private func surfaceIsResting(_ surface: IslandSurfaceDescription) -> Bool {
+        if case .resting = surface { return true }
+        return false
     }
 
     private var surfaceShape: TopAttachedRoundedRectangle {

@@ -18,6 +18,32 @@ final class IslandSurfaceTests: XCTestCase {
         XCTAssertTrue(policy.compactAllowsHitTesting)
     }
 
+    func testRestingHidesExpandedContentBeforeSurfaceExpansionStartsCollapsing() {
+        XCTAssertEqual(
+            IslandContentTransition.expandedOpacity(expansion: 1, isResting: true),
+            0
+        )
+    }
+
+    func testNonRestingExpandedContentContinuesFollowingExpansionProgress() {
+        XCTAssertEqual(
+            IslandContentTransition.expandedOpacity(expansion: 1, isResting: false),
+            1
+        )
+        XCTAssertEqual(
+            IslandContentTransition.expandedOpacity(expansion: 0.4, isResting: false),
+            0.4
+        )
+        XCTAssertEqual(
+            IslandContentTransition.expandedOpacity(expansion: -0.2, isResting: false),
+            0
+        )
+        XCTAssertEqual(
+            IslandContentTransition.expandedOpacity(expansion: 1.2, isResting: false),
+            1
+        )
+    }
+
     func testDisplayContextCanMoveFromPhysicalNotchToNonNotchedScreen() {
         let context = IslandDisplayContext()
 
@@ -175,6 +201,17 @@ final class IslandSurfaceTests: XCTestCase {
 
         XCTAssertEqual(context.expansionTarget, 1)
         XCTAssertEqual(context.presentationSurfaceSize, CGSize(width: 600, height: 180))
+    }
+
+    func testBlackSurfaceVisibilityIsIndependentFromExpansionTarget() {
+        let context = IslandDisplayContext(expansionTarget: 1, drawsBlackSurface: true)
+
+        context.setExpansionTarget(0)
+        XCTAssertTrue(context.drawsBlackSurface)
+
+        context.setDrawsBlackSurface(false)
+        XCTAssertEqual(context.expansionTarget, 0)
+        XCTAssertFalse(context.drawsBlackSurface)
     }
 
     func testSurfaceRadiiProduceSoftRectanglesInsteadOfCapsules() {

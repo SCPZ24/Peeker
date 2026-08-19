@@ -173,6 +173,7 @@ public final class IslandPanelController {
             screen: screen
         )
         let targetExpanded = coordinator.isExpanded
+        let targetDrawsBlackSurface = surfaceDrawsBlack(surface)
         let targetFrame = targetExpanded ? expandedFrame : compactFrame
         let request = IslandPanelTransitionRequest(
             targetExpanded: targetExpanded,
@@ -196,6 +197,7 @@ public final class IslandPanelController {
             )
             displayContext.setExpansionTarget(targetExpanded ? 1 : 0)
             displayContext.updatePresentationSurfaceSize(targetFrame.size)
+            displayContext.setDrawsBlackSurface(targetDrawsBlackSurface)
             _ = transitionState.finish(
                 generation: generation,
                 targetExpanded: targetExpanded
@@ -205,6 +207,9 @@ public final class IslandPanelController {
         }
 
         transitionTask?.cancel()
+        if targetDrawsBlackSurface {
+            displayContext.setDrawsBlackSurface(true)
+        }
         let hostFrame = IslandPanelGeometry.transitionHostFrame(
             compactFrame: compactFrame,
             expandedFrame: expandedFrame,
@@ -237,7 +242,8 @@ public final class IslandPanelController {
                 generation: generation,
                 targetExpanded: targetExpanded,
                 environment: transitionEnvironment,
-                targetFrame: targetFrame
+                targetFrame: targetFrame,
+                targetDrawsBlackSurface: targetDrawsBlackSurface
             )
         }
     }
@@ -246,7 +252,8 @@ public final class IslandPanelController {
         generation: UInt64,
         targetExpanded: Bool,
         environment: IslandPanelTransitionEnvironment,
-        targetFrame: CGRect
+        targetFrame: CGRect,
+        targetDrawsBlackSurface: Bool
     ) {
         guard coordinator.registry.selectedCard != nil,
               let screen = screens.screen(withStableID: environment.screenID),
@@ -260,6 +267,12 @@ public final class IslandPanelController {
         else { return }
         displayContext.updatePresentationSurfaceSize(targetFrame.size)
         panel.setFrame(targetFrame, display: true, animate: false)
+        displayContext.setDrawsBlackSurface(targetDrawsBlackSurface)
+    }
+
+    private func surfaceDrawsBlack(_ surface: IslandSurfaceDescription) -> Bool {
+        if case .resting = surface { return false }
+        return true
     }
 
     private func makeTransitionEnvironment(

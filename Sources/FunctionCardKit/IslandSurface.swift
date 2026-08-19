@@ -12,6 +12,13 @@ struct IslandContentInteractivity: Equatable {
     }
 }
 
+enum IslandContentTransition {
+    static func expandedOpacity(expansion: CGFloat, isResting: Bool) -> CGFloat {
+        guard !isResting else { return 0 }
+        return min(1, max(0, expansion))
+    }
+}
+
 @MainActor
 @Observable
 public final class IslandDisplayContext {
@@ -20,18 +27,21 @@ public final class IslandDisplayContext {
     public private(set) var expandedSurfaceSize: CGSize
     public private(set) var expansionTarget: CGFloat
     public private(set) var presentationSurfaceSize: CGSize
+    public private(set) var drawsBlackSurface: Bool
 
     public init(
         physicalNotchSize: CGSize? = nil,
         compactSurfaceSize: CGSize = .zero,
         expandedSurfaceSize: CGSize = .zero,
         expansionTarget: CGFloat = 0,
-        presentationSurfaceSize: CGSize = .zero
+        presentationSurfaceSize: CGSize = .zero,
+        drawsBlackSurface: Bool = false
     ) {
         self.compactSurfaceSize = Self.normalizedSize(compactSurfaceSize)
         self.expandedSurfaceSize = Self.normalizedSize(expandedSurfaceSize)
         self.expansionTarget = expansionTarget < 0.5 ? 0 : 1
         self.presentationSurfaceSize = Self.normalizedSize(presentationSurfaceSize)
+        self.drawsBlackSurface = drawsBlackSurface
         updatePhysicalNotchSize(physicalNotchSize)
     }
 
@@ -51,6 +61,10 @@ public final class IslandDisplayContext {
 
     public func updatePresentationSurfaceSize(_ size: CGSize) {
         presentationSurfaceSize = Self.normalizedSize(size)
+    }
+
+    public func setDrawsBlackSurface(_ drawsBlackSurface: Bool) {
+        self.drawsBlackSurface = drawsBlackSurface
     }
 
     public func updatePhysicalNotchSize(_ size: CGSize?) {
