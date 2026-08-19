@@ -10,7 +10,7 @@
 
 A native macOS productivity tool built entirely with Swift.
 
-> The repository now implements **v2.0.0**, including the resting island, Timer compact state, unified prompts, Scheduler, and the `peeker` CLI. v2 is not publicly released yet; the public Homebrew stable version may remain v1.0.4 until release. The screenshots below are historical v1 screenshots.
+> The current public release is **v2.0.0**, including the resting island, Timer compact state, unified prompts, Scheduler, and the `peeker` CLI. The screenshots below are historical v1 screenshots.
 
 ## Preview (v1)
 
@@ -26,22 +26,20 @@ Hover over the island to expand its feature cards.
 | --- | --- |
 | ![v1 expanded state](assets/unfold.png) | ![v1 task card](assets/unfold1.png) |
 
-## Local v2 CLI
-
-The locally built `Peeker.app` contains `Contents/MacOS/peeker-cli`. The App must already be running; the CLI neither launches it nor opens SQLite directly.
-
-```bash
-./dist/Peeker.app/Contents/MacOS/peeker-cli --version
-./dist/Peeker.app/Contents/MacOS/peeker-cli status
-```
-
 ## Install the current public stable release
 
 ```bash
 brew install --cask SCPZ24/peeker/peeker
 ```
 
-After the first launch, go to **System Settings → Privacy & Security** and choose to trust Peeker.
+The Cask installs the App and exposes its embedded CLI as `peeker`:
+
+```bash
+peeker --version
+peeker status
+```
+
+Except for `--version` and `status`, CLI commands require the App to be running; the CLI neither launches it nor opens SQLite directly. After the first launch, go to **System Settings → Privacy & Security** and choose to trust Peeker.
 
 ## Documentation
 

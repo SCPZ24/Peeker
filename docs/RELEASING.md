@@ -40,7 +40,7 @@ binary "#{appdir}/Peeker.app/Contents/MacOS/peeker-cli", target: "peeker"
 
 Before App launch, verify `status` returns `running:false` and feature commands return `app_not_running` without creating SQLite. After launch, verify status and the three feature config routes.
 
-## Future publication
+## Publication
 
 Only after local and manual acceptance are complete:
 
@@ -50,8 +50,6 @@ Only after local and manual acceptance are complete:
 4. Upload the exact ZIP and `.sha256`.
 5. Update the external Homebrew Tap from the same ZIP checksum.
 6. Verify public install and upgrade.
-
-None of those remote actions are part of the current v2 implementation task.
 
 ## First launch / 首次启动
 

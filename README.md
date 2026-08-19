@@ -10,7 +10,7 @@
 
 完全使用 Swift 实现的 macOS 原生效率工具。
 
-> 仓库当前实现为 **v2.0.0**：包含静息岛、Timer 运行收敛态、统一提示、Scheduler 和 `peeker` CLI。v2 尚未公开发行；Homebrew 公共稳定版在正式发布前仍可能是 v1.0.4。下方截图是 v1 历史截图。
+> 当前公开版本为 **v2.0.0**：包含静息岛、Timer 运行收敛态、统一提示、Scheduler 和 `peeker` CLI。下方截图是 v1 历史截图。
 
 ## 运行效果（v1）
 
@@ -26,22 +26,20 @@
 | --- | --- |
 | ![v1 展开状态](assets/unfold.png) | ![v1 任务卡片](assets/unfold1.png) |
 
-## 本地 v2 CLI
-
-本地构建的 `Peeker.app` 内含 `Contents/MacOS/peeker-cli`。App 必须已运行；CLI 不会启动 App 或直接打开 SQLite。
-
-```bash
-./dist/Peeker.app/Contents/MacOS/peeker-cli --version
-./dist/Peeker.app/Contents/MacOS/peeker-cli status
-```
-
 ## 安装当前公开稳定版
 
 ```bash
 brew install --cask SCPZ24/peeker/peeker
 ```
 
-首次启动后，请前往“系统设置 → 隐私与安全”，选择信任 Peeker。
+Cask 会安装 App，并将内置 CLI 暴露为 `peeker`：
+
+```bash
+peeker --version
+peeker status
+```
+
+除 `--version` 和 `status` 外，CLI 命令要求 App 已运行；CLI 不会启动 App 或直接打开 SQLite。首次启动后，请前往“系统设置 → 隐私与安全”，选择信任 Peeker。
 
 ## 文档
 
