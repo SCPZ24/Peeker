@@ -39,14 +39,16 @@ SWIFTPM_BUILD_FLAGS=(
 )
 
 swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --product "$APP_NAME"
+swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --product peeker-cli
 BIN_DIR="$(swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --show-bin-path)"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$CONTENTS/Resources"
 cp "$BIN_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
+cp "$BIN_DIR/peeker-cli" "$MACOS_DIR/peeker-cli"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS/Info.plist"
 "$ROOT_DIR/scripts/build-icon.sh" "$CONTENTS/Resources/Peeker.icns"
-chmod +x "$MACOS_DIR/$APP_NAME"
+chmod +x "$MACOS_DIR/$APP_NAME" "$MACOS_DIR/peeker-cli"
 
 SIGN_IDENTITY="${PEEKER_SIGN_IDENTITY:--}"
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
