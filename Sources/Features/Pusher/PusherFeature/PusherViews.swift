@@ -14,6 +14,7 @@ public struct PusherFeatureDependencies {
     public let setEditingText: @MainActor (Bool) -> Void
     public let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     public let onCarryIncompleteChanged: @MainActor (Bool) -> Void
+    public let onMutationEvent: @MainActor (PusherMutationEvent) -> Void
 
     public init(
         repository: any PusherRepository,
@@ -26,7 +27,8 @@ public struct PusherFeatureDependencies {
         setDragging: @escaping @MainActor (Bool) -> Void,
         setEditingText: @escaping @MainActor (Bool) -> Void,
         onRefreshTimeChanged: @escaping @MainActor (RefreshTime) -> Void = { _ in },
-        onCarryIncompleteChanged: @escaping @MainActor (Bool) -> Void = { _ in }
+        onCarryIncompleteChanged: @escaping @MainActor (Bool) -> Void = { _ in },
+        onMutationEvent: @escaping @MainActor (PusherMutationEvent) -> Void = { _ in }
     ) {
         self.repository = repository
         self.clock = clock
@@ -39,6 +41,7 @@ public struct PusherFeatureDependencies {
         self.setEditingText = setEditingText
         self.onRefreshTimeChanged = onRefreshTimeChanged
         self.onCarryIncompleteChanged = onCarryIncompleteChanged
+        self.onMutationEvent = onMutationEvent
     }
 }
 
@@ -54,7 +57,12 @@ public enum PusherFeatureFactory {
     )
 
     public static func make(dependencies: PusherFeatureDependencies) -> FunctionCardRegistration {
-        let store = PusherStore(
+        let store = makeStore(dependencies: dependencies)
+        return makeRegistration(store: store, dependencies: dependencies)
+    }
+
+    public static func makeStore(dependencies: PusherFeatureDependencies) -> PusherStore {
+        PusherStore(
             repository: dependencies.repository,
             clock: dependencies.clock,
             resolver: dependencies.resolver,
@@ -62,8 +70,15 @@ public enum PusherFeatureFactory {
             carryIncomplete: dependencies.carryIncomplete,
             refreshTime: dependencies.refreshTime,
             onRefreshTimeChanged: dependencies.onRefreshTimeChanged,
-            onCarryIncompleteChanged: dependencies.onCarryIncompleteChanged
+            onCarryIncompleteChanged: dependencies.onCarryIncompleteChanged,
+            onMutationEvent: dependencies.onMutationEvent
         )
+    }
+
+    public static func makeRegistration(
+        store: PusherStore,
+        dependencies: PusherFeatureDependencies
+    ) -> FunctionCardRegistration {
         Task { await store.load() }
         return FunctionCardRegistration(
             id: .pusher,
@@ -72,8 +87,6 @@ public enum PusherFeatureFactory {
             settingsSystemImage: "rectangle.3.group",
             defaultOrder: 1,
             metrics: metrics,
-            makeCompactLeadingView: { AnyView(PusherCompactLeadingView(store: store)) },
-            makeCompactTrailingView: { AnyView(PusherCompactTrailingView(store: store)) },
             makeExpandedView: {
                 AnyView(
                     PusherExpandedView(

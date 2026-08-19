@@ -47,7 +47,6 @@ final class TimerModuleTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(),
             eventHub: TemporalEventHub(clock: clock, scheduler: TimerModuleTestScheduler()),
-            audio: TimerModuleTestAudio(),
             preferences: FeaturePreferenceStore(defaults: makeDefaults()),
             hostActions: FunctionCardHostActionsBridge().actions
         )
@@ -70,6 +69,3 @@ private actor TimerModuleTestScheduler: TemporalScheduling {
     func cancelAll() async {}
 }
 
-private actor TimerModuleTestAudio: AudioNotifying {
-    func playCompletionSound() async {}
-}

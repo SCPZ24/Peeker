@@ -17,6 +17,12 @@ public struct TimerModule: FunctionCardModule {
     public func makeRegistration(
         context: FunctionCardModuleContext
     ) -> FunctionCardRegistration {
+        makeRuntimeRegistration(context: context).card
+    }
+
+    public func makeRuntimeRegistration(
+        context: FunctionCardModuleContext
+    ) -> FunctionCardRuntimeRegistration {
         let repository: any TimerRepository
         switch context.persistence {
         case let .success(database):
@@ -26,20 +32,32 @@ public struct TimerModule: FunctionCardModule {
         }
 
         let preferences = TimerModulePreferences(store: context.preferences)
-        return TimerFeatureFactory.make(
-            dependencies: TimerFeatureDependencies(
+        let dependencies = TimerFeatureDependencies(
                 repository: repository,
                 clock: context.clock,
                 resolver: context.resolver,
                 eventHub: context.eventHub,
-                audio: context.audio,
+                publishPrompt: context.hostActions.publishPrompt,
                 refreshTime: preferences.refreshTime,
                 statisticsMode: TimerStatisticsMode(
                     rawValue: preferences.statisticsModeRawValue
                 ) ?? .progress,
-                onRefreshTimeChanged: { preferences.saveRefreshTime($0) },
-                onStatisticsModeChanged: { preferences.statisticsModeRawValue = $0.rawValue }
-            )
+            onRefreshTimeChanged: { preferences.saveRefreshTime($0) },
+            onStatisticsModeChanged: { preferences.statisticsModeRawValue = $0.rawValue }
+        )
+        let store = TimerFeatureFactory.makeStore(dependencies: dependencies)
+        let enabledState = ModuleEnablementState()
+        return FunctionCardRuntimeRegistration(
+            card: TimerFeatureFactory.makeRegistration(store: store),
+            handleCommand: { invocation in
+                await TimerCommandHandler(
+                    store: store,
+                    enabledState: enabledState,
+                    setEnabled: { try context.hostActions.setCardEnabled(.timer, $0) }
+                ).handle(invocation.arguments)
+            },
+            enablementChanged: { enabled in enabledState.enabled = enabled },
+            temporalContextChanged: { await store.handleTemporalEvent(reason: .clockOrTimeZoneRecovery) }
         )
     }
 }

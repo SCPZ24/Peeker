@@ -108,8 +108,9 @@ public final class IslandPanelController {
 
     private func observeLayout() {
         withObservationTracking {
-            _ = coordinator.presentation.base
+            _ = coordinator.surfaceDescription
             _ = coordinator.registry.selectedID
+            _ = coordinator.registry.enabledIDs
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.updateFrame(animated: true)
@@ -120,6 +121,7 @@ public final class IslandPanelController {
 
     private func updateFrame(animated: Bool) {
         guard let selected = coordinator.registry.selectedCard else { return }
+        let surface = coordinator.surfaceDescription
         let requestedScreen = screens.screen(withStableID: targetScreenID)
         let screen = requestedScreen ?? NSScreen.main ?? NSScreen.screens.first
         guard let screen else { return }
@@ -136,8 +138,21 @@ public final class IslandPanelController {
             auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,
             auxiliaryTopRightWidth: auxiliaryTopRightWidth
         )
+        let collapsedSize: CGSize
+        switch surface {
+        case .resting:
+            collapsedSize = IslandPanelGeometry.restingSize(physicalNotchSize: physicalNotchSize)
+        case let .compact(featureID):
+            collapsedSize = coordinator.registry.registrations.first(where: { $0.id == featureID })?
+                .metrics.compactSize(physicalNotchSize: physicalNotchSize)
+                ?? IslandPanelGeometry.restingSize(physicalNotchSize: physicalNotchSize)
+        case .prompt:
+            collapsedSize = CGSize(width: 420, height: 72)
+        case .expanded:
+            collapsedSize = selected.metrics.compactSize(physicalNotchSize: physicalNotchSize)
+        }
         let compactFrame = IslandPanelGeometry.frame(
-            requestedSize: selected.metrics.compactSize(physicalNotchSize: physicalNotchSize),
+            requestedSize: collapsedSize,
             screenFrame: screen.frame,
             safeTopInset: screen.safeAreaInsets.top,
             auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,
@@ -154,7 +169,7 @@ public final class IslandPanelController {
             auxiliaryTopRightWidth: auxiliaryTopRightWidth
         )
         let transitionEnvironment = makeTransitionEnvironment(
-            selectedCard: selected,
+            surface: surface,
             screen: screen
         )
         let targetExpanded = coordinator.isExpanded
@@ -233,11 +248,11 @@ public final class IslandPanelController {
         environment: IslandPanelTransitionEnvironment,
         targetFrame: CGRect
     ) {
-        guard let selectedCard = coordinator.registry.selectedCard,
+        guard coordinator.registry.selectedCard != nil,
               let screen = screens.screen(withStableID: environment.screenID),
               coordinator.isExpanded == targetExpanded,
               targetScreenID == environment.screenID,
-              makeTransitionEnvironment(selectedCard: selectedCard, screen: screen) == environment,
+              makeTransitionEnvironment(surface: coordinator.surfaceDescription, screen: screen) == environment,
               transitionState.finish(
                   generation: generation,
                   targetExpanded: targetExpanded
@@ -248,11 +263,18 @@ public final class IslandPanelController {
     }
 
     private func makeTransitionEnvironment(
-        selectedCard: FunctionCardRegistration,
+        surface: IslandSurfaceDescription,
         screen: NSScreen
     ) -> IslandPanelTransitionEnvironment {
-        IslandPanelTransitionEnvironment(
-            selectedCardID: selectedCard.id.rawValue,
+        let surfaceID: String
+        switch surface {
+        case let .resting(id): surfaceID = "resting:\(id.rawValue)"
+        case let .compact(id): surfaceID = "compact:\(id.rawValue)"
+        case let .prompt(prompt): surfaceID = "prompt:\(prompt.token)"
+        case let .expanded(id): surfaceID = "expanded:\(id.rawValue)"
+        }
+        return IslandPanelTransitionEnvironment(
+            selectedCardID: surfaceID,
             screenID: ScreenTopologyService.stableID(for: screen),
             screenFrame: screen.frame,
             safeTopInset: screen.safeAreaInsets.top,

@@ -1,7 +1,9 @@
 import PeekerCore
 
 public enum IslandBaseState: Equatable, Sendable {
+    case resting
     case compact
+    case prompt
     case hoverExpanded(featureID: FeatureID)
     case pinnedExpanded(featureID: FeatureID)
 }
@@ -44,8 +46,12 @@ public struct IslandPresentationState: Equatable, Sendable {
     }
 
     public mutating func pointerEntered(featureID: FeatureID) {
-        guard case .compact = base else { return }
-        base = .hoverExpanded(featureID: featureID)
+        switch base {
+        case .resting, .compact, .prompt:
+            base = .hoverExpanded(featureID: featureID)
+        case .hoverExpanded, .pinnedExpanded:
+            break
+        }
     }
 
     public mutating func pointerExited() {
@@ -55,7 +61,7 @@ public struct IslandPresentationState: Equatable, Sendable {
 
     public mutating func togglePin() {
         switch base {
-        case .compact:
+        case .resting, .compact, .prompt:
             break
         case let .hoverExpanded(featureID):
             base = .pinnedExpanded(featureID: featureID)
@@ -92,7 +98,7 @@ public struct IslandPresentationState: Equatable, Sendable {
 
     public mutating func select(featureID: FeatureID) {
         switch base {
-        case .compact:
+        case .resting, .compact, .prompt:
             break
         case .hoverExpanded:
             base = .hoverExpanded(featureID: featureID)

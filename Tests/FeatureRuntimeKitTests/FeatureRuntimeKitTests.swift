@@ -92,7 +92,6 @@ final class FeatureRuntimeKitTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(),
             eventHub: eventHub,
-            audio: RuntimeTestAudio(),
             preferences: FeaturePreferenceStore(defaults: defaults),
             hostActions: FunctionCardHostActionsBridge().actions
         )
@@ -160,6 +159,3 @@ private actor RuntimeTestScheduler: TemporalScheduling {
     func cancelAll() async {}
 }
 
-private actor RuntimeTestAudio: AudioNotifying {
-    func playCompletionSound() async {}
-}

@@ -15,7 +15,7 @@ final class GitHubReleaseCheckerTests: XCTestCase {
                 "https://api.github.com/repos/SCPZ24/Peeker/releases"
             )
             XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/vnd.github+json")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "Peeker/1.0")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "Peeker/2.0")
 
             let body = """
             [

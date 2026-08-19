@@ -23,7 +23,7 @@ public final class TimerStore {
     @ObservationIgnored private let clock: any Clock
     @ObservationIgnored private let resolver: BusinessDayResolver
     @ObservationIgnored private let eventHub: TemporalEventHub
-    @ObservationIgnored private let audio: any AudioNotifying
+    @ObservationIgnored private let onNaturalCompletion: @MainActor (TimerTaskInstance) -> Void
     @ObservationIgnored private let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     @ObservationIgnored private let onStatisticsModeChanged: @MainActor (TimerStatisticsMode) -> Void
     @ObservationIgnored private var loadedSnapshotInterval: DateInterval?
@@ -39,7 +39,7 @@ public final class TimerStore {
         clock: any Clock,
         resolver: BusinessDayResolver,
         eventHub: TemporalEventHub,
-        audio: any AudioNotifying,
+        onNaturalCompletion: @escaping @MainActor (TimerTaskInstance) -> Void = { _ in },
         refreshTime: RefreshTime = .midnight,
         statisticsMode: TimerStatisticsMode = .progress,
         onRefreshTimeChanged: @escaping @MainActor (RefreshTime) -> Void = { _ in },
@@ -49,7 +49,7 @@ public final class TimerStore {
         self.clock = clock
         self.resolver = resolver
         self.eventHub = eventHub
-        self.audio = audio
+        self.onNaturalCompletion = onNaturalCompletion
         self.refreshTime = refreshTime
         self.statisticsMode = statisticsMode
         self.onRefreshTimeChanged = onRefreshTimeChanged
@@ -71,7 +71,7 @@ public final class TimerStore {
                 refreshTime: refreshTime
             )
             dayState = try await repository.loadOrBootstrapCurrentDay(resolvedToday: day)
-            try await recoverThroughNow(playSound: false)
+            try await recoverThroughNow(allowPrompt: false)
             try await reloadSnapshots(for: clock.now())
             await scheduleEvents()
             errorMessage = nil
@@ -253,6 +253,11 @@ public final class TimerStore {
         }
     }
 
+    public var runningTask: TimerTaskInstance? {
+        guard let session = dayState?.activeSession else { return nil }
+        return dayState?.tasks.first { $0.id == session.taskID && $0.status == .running }
+    }
+
     public func remainingSeconds(for task: TimerTaskInstance, at date: Date = Date()) -> Int64 {
         guard task.status == .running,
               let session = dayState?.activeSession,
@@ -269,7 +274,7 @@ public final class TimerStore {
 
     private func updateRefreshTimeUnlocked(_ refreshTime: RefreshTime) async {
         do {
-            try await recoverThroughNow(playSound: false)
+            try await recoverThroughNow(allowPrompt: false)
             if let current = dayState {
                 let adjusted = resolver.businessDay(
                     preservingStartOf: current.businessDay,
@@ -308,19 +313,23 @@ public final class TimerStore {
     }
 
     public func handleWake() async {
-        await withMutation { await handleWakeUnlocked() }
+        await handleTemporalEvent(reason: .wakeRecovery)
     }
 
-    private func handleWakeUnlocked() async {
+    public func handleTemporalEvent(reason: TemporalTriggerReason) async {
+        await withMutation { await handleTemporalEventUnlocked(reason: reason) }
+    }
+
+    private func handleTemporalEventUnlocked(reason: TemporalTriggerReason) async {
         do {
-            try await recoverThroughNow(playSound: true)
+            try await recoverThroughNow(allowPrompt: reason == .scheduled)
             await scheduleEvents()
         } catch {
             errorMessage = "Timer 恢复失败：\(error.localizedDescription)"
         }
     }
 
-    private func recoverThroughNow(playSound: Bool) async throws {
+    private func recoverThroughNow(allowPrompt: Bool) async throws {
         guard var state = dayState else { return }
         let nowMilliseconds = clock.now().millisecondsSince1970
 
@@ -328,16 +337,18 @@ public final class TimerStore {
             let boundary = state.businessDay.end.millisecondsSince1970
             var continuingTemplateID: UUID?
             var completion: TimerSessionCompletion?
-            var shouldPlaySoundAfterCommit = false
+            var completedTask: TimerTaskInstance?
+            var shouldPromptAfterCommit = false
             if let session = state.activeSession,
                let task = state.tasks.first(where: { $0.id == session.taskID }) {
                 let target = session.startedAtMilliseconds + task.remainingSeconds * 1_000
                 if target <= boundary {
                     completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
-                    shouldPlaySoundAfterCommit = shouldPlayCompletionSound(
+                    completedTask = state.tasks.first(where: { $0.id == task.id })
+                    shouldPromptAfterCommit = shouldPublishCompletionPrompt(
                         targetMilliseconds: target,
                         nowMilliseconds: nowMilliseconds,
-                        playSound: playSound
+                        allowPrompt: allowPrompt
                     )
                 } else {
                     continuingTemplateID = task.templateID
@@ -367,7 +378,7 @@ public final class TimerStore {
             )
             dayState = state
             cache(snapshot)
-            if shouldPlaySoundAfterCommit { await audio.playCompletionSound() }
+            if shouldPromptAfterCommit, let completedTask { onNaturalCompletion(completedTask) }
         }
 
         if let session = state.activeSession,
@@ -376,29 +387,29 @@ public final class TimerStore {
             if target <= nowMilliseconds {
                 let completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
                 try await repository.commitCompletion(state: state, completion: completion)
-                if shouldPlayCompletionSound(
+                if shouldPublishCompletionPrompt(
                     targetMilliseconds: target,
                     nowMilliseconds: nowMilliseconds,
-                    playSound: playSound
-                ) {
-                    await audio.playCompletionSound()
+                    allowPrompt: allowPrompt
+                ), let completedTask = state.tasks.first(where: { $0.id == task.id }) {
+                    onNaturalCompletion(completedTask)
                 }
             }
         }
         dayState = state
     }
 
-    private func shouldPlayCompletionSound(
+    private func shouldPublishCompletionPrompt(
         targetMilliseconds: Int64,
         nowMilliseconds: Int64,
-        playSound: Bool
+        allowPrompt: Bool
     ) -> Bool {
-        playSound && (0...2_000).contains(nowMilliseconds - targetMilliseconds)
+        allowPrompt && (0...2_000).contains(nowMilliseconds - targetMilliseconds)
     }
 
     private func prepareCurrentDayForMutation() async throws {
         do {
-            try await recoverThroughNow(playSound: false)
+            try await recoverThroughNow(allowPrompt: false)
             await scheduleEvents()
         } catch {
             await scheduleEvents()
@@ -462,8 +473,8 @@ public final class TimerStore {
 
     private func scheduleEvents() async {
         guard let state = dayState else { return }
-        await eventHub.set(boundaryKey, at: state.businessDay.end, priority: 1) { [weak self] in
-            await self?.handleWake()
+        await eventHub.set(boundaryKey, at: state.businessDay.end, priority: 1) { [weak self] reason in
+            await self?.handleTemporalEvent(reason: reason)
         }
 
         let targetDate: Date?
@@ -475,8 +486,8 @@ public final class TimerStore {
         } else {
             targetDate = nil
         }
-        await eventHub.set(targetKey, at: targetDate, priority: 0) { [weak self] in
-            await self?.handleWake()
+        await eventHub.set(targetKey, at: targetDate, priority: 0) { [weak self] reason in
+            await self?.handleTemporalEvent(reason: reason)
         }
     }
 }

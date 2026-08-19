@@ -41,15 +41,33 @@ public struct FunctionCardMetrics: Equatable, Sendable {
 }
 
 @MainActor
+public struct FunctionCardCompactProvider {
+    public let isEligible: () -> Bool
+    public let makeLeadingView: () -> AnyView
+    public let makeTrailingView: () -> AnyView
+
+    public init(
+        isEligible: @escaping () -> Bool,
+        makeLeadingView: @escaping () -> AnyView,
+        makeTrailingView: @escaping () -> AnyView
+    ) {
+        self.isEligible = isEligible
+        self.makeLeadingView = makeLeadingView
+        self.makeTrailingView = makeTrailingView
+    }
+}
+
+@MainActor
 public struct FunctionCardRegistration: Identifiable {
     public let id: FeatureID
     public let name: String
     public let systemImage: String
     public let settingsSystemImage: String
     public let defaultOrder: Int
+    public let introducedConfigurationVersion: Int
+    public let defaultEnabled: Bool
     public let metrics: FunctionCardMetrics
-    public let makeCompactLeadingView: () -> AnyView
-    public let makeCompactTrailingView: () -> AnyView
+    public let compactProvider: FunctionCardCompactProvider?
     public let makeExpandedView: () -> AnyView
     public let makeSettingsView: () -> AnyView
 
@@ -59,9 +77,12 @@ public struct FunctionCardRegistration: Identifiable {
         systemImage: String,
         settingsSystemImage: String? = nil,
         defaultOrder: Int,
+        introducedConfigurationVersion: Int = 1,
+        defaultEnabled: Bool = true,
         metrics: FunctionCardMetrics,
-        makeCompactLeadingView: @escaping () -> AnyView,
-        makeCompactTrailingView: @escaping () -> AnyView,
+        isCompactEligible: @escaping () -> Bool = { true },
+        makeCompactLeadingView: (() -> AnyView)? = nil,
+        makeCompactTrailingView: (() -> AnyView)? = nil,
         makeExpandedView: @escaping () -> AnyView,
         makeSettingsView: @escaping () -> AnyView
     ) {
@@ -70,9 +91,18 @@ public struct FunctionCardRegistration: Identifiable {
         self.systemImage = systemImage
         self.settingsSystemImage = settingsSystemImage ?? systemImage
         self.defaultOrder = defaultOrder
+        self.introducedConfigurationVersion = introducedConfigurationVersion
+        self.defaultEnabled = defaultEnabled
         self.metrics = metrics
-        self.makeCompactLeadingView = makeCompactLeadingView
-        self.makeCompactTrailingView = makeCompactTrailingView
+        if let makeCompactLeadingView, let makeCompactTrailingView {
+            compactProvider = FunctionCardCompactProvider(
+                isEligible: isCompactEligible,
+                makeLeadingView: makeCompactLeadingView,
+                makeTrailingView: makeCompactTrailingView
+            )
+        } else {
+            compactProvider = nil
+        }
         self.makeExpandedView = makeExpandedView
         self.makeSettingsView = makeSettingsView
     }

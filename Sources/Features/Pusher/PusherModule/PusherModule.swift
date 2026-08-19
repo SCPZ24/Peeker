@@ -17,6 +17,12 @@ public struct PusherModule: FunctionCardModule {
     public func makeRegistration(
         context: FunctionCardModuleContext
     ) -> FunctionCardRegistration {
+        makeRuntimeRegistration(context: context).card
+    }
+
+    public func makeRuntimeRegistration(
+        context: FunctionCardModuleContext
+    ) -> FunctionCardRuntimeRegistration {
         let repository: any PusherRepository
         switch context.persistence {
         case let .success(database):
@@ -26,8 +32,7 @@ public struct PusherModule: FunctionCardModule {
         }
 
         let preferences = PusherModulePreferences(store: context.preferences)
-        return PusherFeatureFactory.make(
-            dependencies: PusherFeatureDependencies(
+        let dependencies = PusherFeatureDependencies(
                 repository: repository,
                 clock: context.clock,
                 resolver: context.resolver,
@@ -37,9 +42,37 @@ public struct PusherModule: FunctionCardModule {
                 setPopoverPresented: context.hostActions.setPopoverPresented,
                 setDragging: context.hostActions.setDragging,
                 setEditingText: context.hostActions.setEditingText,
-                onRefreshTimeChanged: { preferences.saveRefreshTime($0) },
-                onCarryIncompleteChanged: { preferences.carryIncomplete = $0 }
-            )
+            onRefreshTimeChanged: { preferences.saveRefreshTime($0) },
+            onCarryIncompleteChanged: { preferences.carryIncomplete = $0 },
+            onMutationEvent: { event in
+                let summary: String
+                switch event {
+                case let .created(task): summary = "已新建：\(task.title)"
+                case let .deleted(task): summary = "已删除：\(task.title)"
+                case let .moved(task, from, to): summary = "\(task.title)：\(from.rawValue) → \(to.rawValue)"
+                }
+                context.hostActions.publishPrompt(FunctionCardPrompt(
+                    token: UUID().uuidString,
+                    sourceID: .pusher,
+                    systemImage: "rectangle.3.group.fill",
+                    moduleName: "Pusher",
+                    summary: summary
+                ))
+            }
+        )
+        let store = PusherFeatureFactory.makeStore(dependencies: dependencies)
+        let enabledState = PusherEnablementState()
+        return FunctionCardRuntimeRegistration(
+            card: PusherFeatureFactory.makeRegistration(store: store, dependencies: dependencies),
+            handleCommand: { invocation in
+                await PusherCommandHandler(
+                    store: store,
+                    enabledState: enabledState,
+                    setEnabled: { try context.hostActions.setCardEnabled(.pusher, $0) }
+                ).handle(invocation.arguments)
+            },
+            enablementChanged: { enabled in enabledState.enabled = enabled },
+            temporalContextChanged: { await store.handleWake() }
         )
     }
 }

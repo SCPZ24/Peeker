@@ -14,10 +14,6 @@ public protocol TemporalScheduling: Sendable {
     func cancelAll() async
 }
 
-public protocol AudioNotifying: Sendable {
-    func playCompletionSound() async
-}
-
 public struct ScreenDescriptor: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let name: String

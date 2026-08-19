@@ -11,6 +11,7 @@ final class SettingsStore {
     var selectedScreenID: String?
     var launchStatus: LaunchAtLoginStatus = .disabled
     var launchError: String?
+    var runtimeError: String?
     var updateState: UpdateState = .idle
     let startupError: String?
     var didSelectScreen: ((String?) -> Void)?
@@ -69,6 +70,10 @@ final class SettingsStore {
         await refreshLaunchStatus()
     }
 
+    func reportRuntimeError(_ message: String) {
+        runtimeError = message
+    }
+
     func checkForUpdates() async {
         updateState = .checking
         do {
@@ -76,7 +81,7 @@ final class SettingsStore {
                 updateState = .current("没有可用的公开版本。")
                 return
             }
-            let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.4"
+            let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "2.0.0"
             if let localVersion = SemanticVersion(current),
                let remoteVersion = SemanticVersion(release.version),
                localVersion < remoteVersion {

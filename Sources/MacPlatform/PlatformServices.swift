@@ -24,16 +24,6 @@ public actor DispatchTemporalScheduler: TemporalScheduling {
     }
 }
 
-public struct SystemAudioNotifier: AudioNotifying {
-    public init() {}
-
-    public func playCompletionSound() async {
-        await MainActor.run {
-            NSSound.beep()
-        }
-    }
-}
-
 @MainActor
 public final class LaunchAtLoginManager: LaunchAtLoginManaging {
     public init() {}
@@ -68,7 +58,7 @@ public struct GitHubReleaseChecker: UpdateChecking {
     public func latestRelease() async throws -> AppRelease? {
         var request = URLRequest(url: releasesURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("Peeker/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("Peeker/2.0", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw URLError(.badServerResponse)

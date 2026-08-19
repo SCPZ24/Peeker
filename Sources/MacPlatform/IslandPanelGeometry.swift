@@ -57,6 +57,13 @@ struct IslandPanelTransitionState {
 }
 
 public enum IslandPanelGeometry {
+    public static func restingSize(physicalNotchSize: CGSize?) -> CGSize {
+        if let physicalNotchSize {
+            return CGSize(width: ceil(physicalNotchSize.width + 32), height: ceil(physicalNotchSize.height))
+        }
+        return CGSize(width: 220, height: 8)
+    }
+
     public static func transitionHostFrame(
         compactFrame: CGRect,
         expandedFrame: CGRect,

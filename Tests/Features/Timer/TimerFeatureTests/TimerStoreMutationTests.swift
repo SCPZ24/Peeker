@@ -30,7 +30,6 @@ final class TimerStoreMutationTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(calendar: calendar),
             eventHub: TemporalEventHub(clock: clock, scheduler: TimerNoopScheduler()),
-            audio: TimerSilentAudio()
         )
         await store.load()
 
@@ -77,7 +76,6 @@ final class TimerStoreMutationTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(calendar: calendar),
             eventHub: TemporalEventHub(clock: clock, scheduler: TimerNoopScheduler()),
-            audio: TimerSilentAudio()
         )
         await store.load()
 
@@ -206,6 +204,3 @@ private actor TimerNoopScheduler: TemporalScheduling {
     func cancelAll() async {}
 }
 
-private actor TimerSilentAudio: AudioNotifying {
-    func playCompletionSound() async {}
-}

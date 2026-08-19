@@ -7,7 +7,7 @@ public struct TimerFeatureDependencies {
     public let clock: any Clock
     public let resolver: BusinessDayResolver
     public let eventHub: TemporalEventHub
-    public let audio: any AudioNotifying
+    public let publishPrompt: @MainActor (FunctionCardPrompt) -> Void
     public let refreshTime: RefreshTime
     public let statisticsMode: TimerStatisticsMode
     public let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
@@ -18,7 +18,7 @@ public struct TimerFeatureDependencies {
         clock: any Clock,
         resolver: BusinessDayResolver,
         eventHub: TemporalEventHub,
-        audio: any AudioNotifying,
+        publishPrompt: @escaping @MainActor (FunctionCardPrompt) -> Void = { _ in },
         refreshTime: RefreshTime = .midnight,
         statisticsMode: TimerStatisticsMode = .progress,
         onRefreshTimeChanged: @escaping @MainActor (RefreshTime) -> Void = { _ in },
@@ -28,7 +28,7 @@ public struct TimerFeatureDependencies {
         self.clock = clock
         self.resolver = resolver
         self.eventHub = eventHub
-        self.audio = audio
+        self.publishPrompt = publishPrompt
         self.refreshTime = refreshTime
         self.statisticsMode = statisticsMode
         self.onRefreshTimeChanged = onRefreshTimeChanged
@@ -48,17 +48,33 @@ public enum TimerFeatureFactory {
     )
 
     public static func make(dependencies: TimerFeatureDependencies) -> FunctionCardRegistration {
-        let store = TimerStore(
+        let store = makeStore(dependencies: dependencies)
+        return makeRegistration(store: store)
+    }
+
+    public static func makeStore(dependencies: TimerFeatureDependencies) -> TimerStore {
+        TimerStore(
             repository: dependencies.repository,
             clock: dependencies.clock,
             resolver: dependencies.resolver,
             eventHub: dependencies.eventHub,
-            audio: dependencies.audio,
+            onNaturalCompletion: { task in
+                dependencies.publishPrompt(FunctionCardPrompt(
+                    token: UUID().uuidString,
+                    sourceID: .timer,
+                    systemImage: "timer",
+                    moduleName: "Timer",
+                    summary: "✓ \(task.name)"
+                ))
+            },
             refreshTime: dependencies.refreshTime,
             statisticsMode: dependencies.statisticsMode,
             onRefreshTimeChanged: dependencies.onRefreshTimeChanged,
             onStatisticsModeChanged: dependencies.onStatisticsModeChanged
         )
+    }
+
+    public static func makeRegistration(store: TimerStore) -> FunctionCardRegistration {
         Task { await store.load() }
         return FunctionCardRegistration(
             id: .timer,
@@ -66,6 +82,7 @@ public enum TimerFeatureFactory {
             systemImage: "timer",
             defaultOrder: 0,
             metrics: metrics,
+            isCompactEligible: { store.runningTask != nil },
             makeCompactLeadingView: { AnyView(TimerCompactLeadingView(store: store)) },
             makeCompactTrailingView: { AnyView(TimerCompactTrailingView(store: store)) },
             makeExpandedView: { AnyView(TimerExpandedView(store: store)) },
@@ -78,7 +95,7 @@ private struct TimerCompactLeadingView: View {
     @Bindable var store: TimerStore
 
     var body: some View {
-        if let task = store.dayState?.summaryTask {
+        if let task = store.runningTask {
             HStack(spacing: 8) {
                 Circle()
                     .fill(Color(hex: task.colorHex))
@@ -100,20 +117,11 @@ private struct TimerCompactTrailingView: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            if let task = store.dayState?.summaryTask {
-                let remainingSeconds = store.remainingSeconds(for: task, at: context.date)
-                if task.status == .completed {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else {
-                    Text(formatDuration(remainingSeconds))
-                        .monospacedDigit()
-                        .foregroundStyle(TimerIslandAppearance.secondaryText)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
-            } else {
-                Text("未配置")
+            if let task = store.runningTask {
+                Text(formatDuration(store.remainingSeconds(for: task, at: context.date)))
+                    .monospacedDigit()
                     .foregroundStyle(TimerIslandAppearance.secondaryText)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }

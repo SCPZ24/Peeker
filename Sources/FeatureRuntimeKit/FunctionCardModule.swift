@@ -2,6 +2,7 @@ import Foundation
 import FunctionCardKit
 import MacPlatform
 import PeekerCore
+import PeekerProtocol
 import PersistenceCore
 
 public struct StartupPersistenceError: LocalizedError, Sendable, Equatable {
@@ -19,15 +20,24 @@ public struct FunctionCardHostActions {
     public let setPopoverPresented: @MainActor @Sendable (Bool) -> Void
     public let setDragging: @MainActor @Sendable (Bool) -> Void
     public let setEditingText: @MainActor @Sendable (Bool) -> Void
+    public let publishPrompt: @MainActor @Sendable (FunctionCardPrompt) -> Void
+    public let revokePrompt: @MainActor @Sendable (String) -> Void
+    public let setCardEnabled: @MainActor @Sendable (FeatureID, Bool) throws -> Void
 
     public init(
         setPopoverPresented: @escaping @MainActor @Sendable (Bool) -> Void,
         setDragging: @escaping @MainActor @Sendable (Bool) -> Void,
-        setEditingText: @escaping @MainActor @Sendable (Bool) -> Void
+        setEditingText: @escaping @MainActor @Sendable (Bool) -> Void,
+        publishPrompt: @escaping @MainActor @Sendable (FunctionCardPrompt) -> Void = { _ in },
+        revokePrompt: @escaping @MainActor @Sendable (String) -> Void = { _ in },
+        setCardEnabled: @escaping @MainActor @Sendable (FeatureID, Bool) throws -> Void = { _, _ in }
     ) {
         self.setPopoverPresented = setPopoverPresented
         self.setDragging = setDragging
         self.setEditingText = setEditingText
+        self.publishPrompt = publishPrompt
+        self.revokePrompt = revokePrompt
+        self.setCardEnabled = setCardEnabled
     }
 }
 
@@ -41,7 +51,13 @@ public final class FunctionCardHostActionsBridge {
         FunctionCardHostActions(
             setPopoverPresented: { [self] in coordinator?.setPopoverPresented($0) },
             setDragging: { [self] in coordinator?.setDragging($0) },
-            setEditingText: { [self] in coordinator?.setEditingText($0) }
+            setEditingText: { [self] in coordinator?.setEditingText($0) },
+            publishPrompt: { [self] in coordinator?.publishPrompt($0) },
+            revokePrompt: { [self] in coordinator?.revokePrompt(token: $0) },
+            setCardEnabled: { [self] id, enabled in
+                guard let coordinator else { return }
+                try coordinator.registry.setEnabled(id, enabled: enabled)
+            }
         )
     }
 
@@ -56,7 +72,6 @@ public struct FunctionCardModuleContext {
     public let clock: any Clock
     public let resolver: BusinessDayResolver
     public let eventHub: TemporalEventHub
-    public let audio: any AudioNotifying
     public let preferences: FeaturePreferenceStore
     public let hostActions: FunctionCardHostActions
 
@@ -65,7 +80,6 @@ public struct FunctionCardModuleContext {
         clock: any Clock,
         resolver: BusinessDayResolver,
         eventHub: TemporalEventHub,
-        audio: any AudioNotifying,
         preferences: FeaturePreferenceStore,
         hostActions: FunctionCardHostActions
     ) {
@@ -73,9 +87,32 @@ public struct FunctionCardModuleContext {
         self.clock = clock
         self.resolver = resolver
         self.eventHub = eventHub
-        self.audio = audio
         self.preferences = preferences
         self.hostActions = hostActions
+    }
+}
+
+public typealias FunctionCardCommandHandler = @MainActor @Sendable (CommandInvocation) async -> PeekerEnvelope
+
+@MainActor
+public struct FunctionCardRuntimeRegistration {
+    public let card: FunctionCardRegistration
+    public let handleCommand: FunctionCardCommandHandler
+    public let enablementChanged: @MainActor @Sendable (Bool) async -> Void
+    public let temporalContextChanged: @MainActor @Sendable () async -> Void
+
+    public init(
+        card: FunctionCardRegistration,
+        handleCommand: @escaping FunctionCardCommandHandler = { _ in
+            .failure(PeekerError(code: "invalid_usage", message: "This feature does not expose commands"))
+        },
+        enablementChanged: @escaping @MainActor @Sendable (Bool) async -> Void = { _ in },
+        temporalContextChanged: @escaping @MainActor @Sendable () async -> Void = {}
+    ) {
+        self.card = card
+        self.handleCommand = handleCommand
+        self.enablementChanged = enablementChanged
+        self.temporalContextChanged = temporalContextChanged
     }
 }
 
@@ -84,6 +121,13 @@ public protocol FunctionCardModule {
     var id: FeatureID { get }
     var databaseMigrations: [AppDatabaseMigration] { get }
     func makeRegistration(context: FunctionCardModuleContext) -> FunctionCardRegistration
+    func makeRuntimeRegistration(context: FunctionCardModuleContext) -> FunctionCardRuntimeRegistration
+}
+
+public extension FunctionCardModule {
+    func makeRuntimeRegistration(context: FunctionCardModuleContext) -> FunctionCardRuntimeRegistration {
+        FunctionCardRuntimeRegistration(card: makeRegistration(context: context))
+    }
 }
 
 public enum FunctionCardModuleCatalogError: Error, Equatable {
@@ -117,9 +161,42 @@ public struct FunctionCardModuleCatalog {
         databaseMigrations = migrations
     }
 
+    public func makeRuntimeRegistrations(
+        context: FunctionCardModuleContext
+    ) -> [FunctionCardRuntimeRegistration] {
+        modules.map { $0.makeRuntimeRegistration(context: context) }
+    }
+
     public func makeRegistrations(
         context: FunctionCardModuleContext
     ) -> [FunctionCardRegistration] {
-        modules.map { $0.makeRegistration(context: context) }
+        makeRuntimeRegistrations(context: context).map(\.card)
+    }
+}
+
+@MainActor
+public final class FunctionCardCommandRouter {
+    private let handlers: [FeatureID: FunctionCardCommandHandler]
+
+    public init(registrations: [FunctionCardRuntimeRegistration]) throws {
+        var handlers: [FeatureID: FunctionCardCommandHandler] = [:]
+        for registration in registrations {
+            guard handlers[registration.card.id] == nil else {
+                throw FunctionCardModuleCatalogError.duplicateFeatureID(registration.card.id)
+            }
+            handlers[registration.card.id] = registration.handleCommand
+        }
+        self.handlers = handlers
+    }
+
+    public func handle(_ invocation: CommandInvocation) async -> PeekerEnvelope {
+        let id = FeatureID(rawValue: invocation.featureID)
+        guard let handler = handlers[id] else {
+            return .failure(PeekerError(
+                code: "not_found",
+                message: "Unknown feature: \(invocation.featureID)"
+            ))
+        }
+        return await handler(invocation)
     }
 }

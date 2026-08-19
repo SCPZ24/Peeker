@@ -1,5 +1,7 @@
 import Foundation
 import XCTest
+import SwiftUI
+import FunctionCardKit
 import PeekerCore
 @testable import MacPlatform
 
@@ -12,6 +14,29 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(preferences.enabledCardIDs, [])
         XCTAssertEqual(preferences.cardOrder, [])
         XCTAssertNil(preferences.recentCardID)
+    }
+
+    func testFreshInstallEnablesAllCardsInDefaultOrder() {
+        let preferences = AppPreferences(defaults: makeDefaults())
+        let snapshot = preferences.upgradedCards(registrations: registrations())
+
+        XCTAssertEqual(snapshot.enabledIDs.map(\.rawValue), ["timer", "pusher", "scheduler"])
+        XCTAssertEqual(snapshot.recentID.rawValue, "timer")
+    }
+
+    func testV1UpgradePreservesDisabledCardsAndAppendsSchedulerOnce() {
+        let defaults = makeDefaults()
+        defaults.set(["pusher"], forKey: "enabledCardIDs")
+        defaults.set(["pusher"], forKey: "cardOrder")
+        defaults.set("timer", forKey: "recentCardID")
+        let preferences = AppPreferences(defaults: defaults)
+
+        let first = preferences.upgradedCards(registrations: registrations())
+        let second = preferences.upgradedCards(registrations: registrations())
+
+        XCTAssertEqual(first.enabledIDs.map(\.rawValue), ["pusher", "scheduler"])
+        XCTAssertEqual(first.recentID.rawValue, "pusher")
+        XCTAssertEqual(second.enabledIDs, first.enabledIDs)
     }
 
     func testGenericFeaturePreferencesPreserveLegacyRawKeys() {
@@ -32,6 +57,36 @@ final class AppPreferencesTests: XCTestCase {
 
         preferences.set(12, forKey: "timerRefreshHour")
         XCTAssertEqual(defaults.integer(forKey: "timerRefreshHour"), 12)
+    }
+
+    private func registrations() -> [FunctionCardRegistration] {
+        [
+            registration(id: "timer", order: 0, introduced: 1),
+            registration(id: "pusher", order: 1, introduced: 1),
+            registration(id: "scheduler", order: 2, introduced: 2),
+        ]
+    }
+
+    private func registration(id: String, order: Int, introduced: Int) -> FunctionCardRegistration {
+        FunctionCardRegistration(
+            id: FeatureID(rawValue: id),
+            name: id,
+            systemImage: "circle",
+            defaultOrder: order,
+            introducedConfigurationVersion: introduced,
+            metrics: FunctionCardMetrics(
+                compactWidth: 1,
+                compactHeight: 1,
+                compactLeadingWidth: 1,
+                compactTrailingWidth: 1,
+                expandedWidth: 1,
+                expandedHeight: 1
+            ),
+            makeCompactLeadingView: { AnyView(EmptyView()) },
+            makeCompactTrailingView: { AnyView(EmptyView()) },
+            makeExpandedView: { AnyView(EmptyView()) },
+            makeSettingsView: { AnyView(EmptyView()) }
+        )
     }
 
     private func makeDefaults() -> UserDefaults {

@@ -6,25 +6,35 @@ struct PeekerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Settings {
-            SettingsRootView(runtime: .shared)
-        }
+        Settings { SettingsRootView(runtime: .shared) }
     }
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var wakeObserver: NSObjectProtocol?
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var systemObservers: [NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         AppRuntime.shared.start()
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspaceObservers.append(workspace.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { _ in Task { @MainActor in AppRuntime.shared.handleSleep() } })
+        workspaceObservers.append(workspace.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil,
             queue: .main
-        ) { _ in
-            Task { @MainActor in AppRuntime.shared.handleWake() }
+        ) { _ in Task { @MainActor in AppRuntime.shared.handleWake() } })
+
+        let center = NotificationCenter.default
+        for name in [Notification.Name.NSSystemClockDidChange, Notification.Name.NSSystemTimeZoneDidChange] {
+            systemObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                Task { @MainActor in AppRuntime.shared.handleClockOrTimeZoneChange() }
+            })
         }
     }
 
@@ -34,8 +44,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if let wakeObserver {
-            NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver)
-        }
+        AppRuntime.shared.stop()
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspaceObservers.forEach(workspace.removeObserver)
+        systemObservers.forEach(NotificationCenter.default.removeObserver)
     }
 }

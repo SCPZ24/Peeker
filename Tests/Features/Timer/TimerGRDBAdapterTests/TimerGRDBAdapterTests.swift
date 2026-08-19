@@ -309,7 +309,6 @@ final class TimerGRDBAdapterTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(calendar: calendar),
             eventHub: TemporalEventHub(clock: clock, scheduler: PersistenceNoopScheduler()),
-            audio: SilentTestAudio(),
             statisticsMode: .heatmap
         )
 
@@ -324,7 +323,6 @@ final class TimerGRDBAdapterTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(calendar: calendar),
             eventHub: TemporalEventHub(clock: clock, scheduler: PersistenceNoopScheduler()),
-            audio: SilentTestAudio(),
             statisticsMode: .progress
         )
         await relaunched.load()
@@ -336,7 +334,7 @@ final class TimerGRDBAdapterTests: XCTestCase {
     }
 
     @MainActor
-    func testTimerWakeDoesNotReplayCompletionSoundForAStaleOfflineTarget() async throws {
+    func testTimerWakeDoesNotReplayCompletionPromptForAStaleOfflineTarget() async throws {
         let database = try AppDatabase.inMemory()
         let repository = TimerGRDBRepository(database: database)
         let oldDay = makeDay(featureID: .timer)
@@ -348,21 +346,20 @@ final class TimerGRDBAdapterTests: XCTestCase {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
         let clock = FixedTestClock(date: Date(millisecondsSince1970: 30_000))
-        let audio = RecordingTestAudio()
+        var completedTasks: [TimerTaskInstance] = []
         let store = TimerStore(
             repository: repository,
             clock: clock,
             resolver: BusinessDayResolver(calendar: calendar),
             eventHub: TemporalEventHub(clock: clock, scheduler: PersistenceNoopScheduler()),
-            audio: audio
+            onNaturalCompletion: { completedTasks.append($0) }
         )
         await store.load()
         clock.set(oldDay.end.addingTimeInterval(86_401))
 
         await store.handleWake()
 
-        let playCount = await audio.playCount()
-        XCTAssertEqual(playCount, 0)
+        XCTAssertTrue(completedTasks.isEmpty)
         XCTAssertNil(store.dayState?.activeSession)
     }
 
@@ -392,7 +389,6 @@ final class TimerGRDBAdapterTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(calendar: calendar),
             eventHub: TemporalEventHub(clock: clock, scheduler: PersistenceNoopScheduler()),
-            audio: SilentTestAudio()
         )
 
         await store.load()
@@ -427,7 +423,6 @@ final class TimerGRDBAdapterTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(calendar: calendar),
             eventHub: TemporalEventHub(clock: clock, scheduler: PersistenceNoopScheduler()),
-            audio: SilentTestAudio()
         )
         await store.load()
 
@@ -555,12 +550,4 @@ private actor PersistenceNoopScheduler: TemporalScheduling {
     func cancelAll() async {}
 }
 
-private actor SilentTestAudio: AudioNotifying {
-    func playCompletionSound() async {}
-}
 
-private actor RecordingTestAudio: AudioNotifying {
-    private var count = 0
-    func playCompletionSound() async { count += 1 }
-    func playCount() -> Int { count }
-}

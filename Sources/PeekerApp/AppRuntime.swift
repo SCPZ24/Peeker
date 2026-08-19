@@ -1,6 +1,8 @@
 import AppKit
 import SwiftUI
 import PeekerCore
+import PeekerIPC
+import PeekerProtocol
 import FunctionCardKit
 import PersistenceCore
 import MacPlatform
@@ -18,7 +20,10 @@ final class AppRuntime {
     let islandCoordinator: IslandCoordinator
     let settingsStore: SettingsStore
     private(set) var panelController: IslandPanelController!
+    private(set) var ipcServer: PeekerIPCServer!
     private let eventHub: TemporalEventHub
+    private let runtimeRegistrations: [FunctionCardRuntimeRegistration]
+    private let commandRouter: FunctionCardCommandRouter
     private let settingsWindowPositioner = SettingsWindowPositioner()
     private lazy var settingsPresentationRouter = SettingsPresentationRouter(
         willOpen: {
@@ -68,22 +73,37 @@ final class AppRuntime {
             clock: clock,
             resolver: BusinessDayResolver(),
             eventHub: eventHub,
-            audio: SystemAudioNotifier(),
             preferences: FeaturePreferenceStore(),
             hostActions: hostActionsBridge.actions
         )
-        let cards = catalog.makeRegistrations(context: context)
-        let configuredEnabled = Set(preferences.enabledCardIDs)
-        let orderedEnabled = preferences.cardOrder.filter(configuredEnabled.contains)
+        runtimeRegistrations = catalog.makeRuntimeRegistrations(context: context)
+        do {
+            commandRouter = try FunctionCardCommandRouter(registrations: runtimeRegistrations)
+        } catch {
+            preconditionFailure("Built-in command router is invalid: \(error)")
+        }
+        let cards = runtimeRegistrations.map(\.card)
+        let cardPreferences = preferences.upgradedCards(registrations: cards)
+        let promptCenter = PromptCenter()
         registry = CardRegistry(
             registrations: cards,
-            enabledIDs: orderedEnabled,
-            recentID: preferences.recentCardID,
+            enabledIDs: cardPreferences.enabledIDs,
+            recentID: cardPreferences.recentID,
+            lastOpenedAt: cardPreferences.lastOpenedAt,
             onChange: { [preferences] enabled, recent in
                 preferences.saveCards(enabled: enabled, recent: recent)
+            },
+            onEnablementChange: { [runtimeRegistrations, promptCenter] id, enabled in
+                if !enabled { promptCenter.clear(sourceID: id) }
+                if let runtime = runtimeRegistrations.first(where: { $0.card.id == id }) {
+                    Task { await runtime.enablementChanged(enabled) }
+                }
+            },
+            onOpened: { [preferences] id, date in
+                preferences.markCardOpened(id, at: date)
             }
         )
-        islandCoordinator = IslandCoordinator(registry: registry)
+        islandCoordinator = IslandCoordinator(registry: registry, promptCenter: promptCenter)
         hostActionsBridge.attach(to: islandCoordinator)
 
         let islandDisplayContext = IslandDisplayContext()
@@ -115,11 +135,22 @@ final class AppRuntime {
         settingsStore.didSelectScreen = { [weak panelController] id in
             panelController?.setTargetScreenID(id)
         }
+        ipcServer = PeekerIPCServer { request in
+            await AppRuntime.shared.handleIPC(request)
+        }
     }
 
     func start() {
         panelController.show()
+        do {
+            try ipcServer.start()
+        } catch {
+            settingsStore.reportRuntimeError("CLI 服务启动失败：\(error.localizedDescription)")
+        }
         Task {
+            for runtime in runtimeRegistrations {
+                await runtime.enablementChanged(registry.enabledIDs.contains(runtime.card.id))
+            }
             await settingsStore.load()
             if !preferences.hasAttemptedDefaultLaunchRegistration {
                 preferences.hasAttemptedDefaultLaunchRegistration = true
@@ -129,8 +160,39 @@ final class AppRuntime {
         }
     }
 
+    func handleSleep() {
+        Task { await eventHub.sleep() }
+    }
+
     func handleWake() {
         Task { await eventHub.wake() }
+    }
+
+    func handleClockOrTimeZoneChange() {
+        Task {
+            await eventHub.clockOrTimeZoneChanged()
+            for runtime in runtimeRegistrations { await runtime.temporalContextChanged() }
+        }
+    }
+
+    func stop() {
+        ipcServer.stop()
+    }
+
+    private func handleIPC(_ request: IPCRequest) async -> PeekerEnvelope {
+        switch request {
+        case .handshake:
+            return .failure(PeekerError(code: "invalid_usage", message: "Handshake already completed"))
+        case .status:
+            return .success(.object([
+                "running": .bool(true),
+                "appVersion": .string(PeekerContract.appVersion),
+                "protocolVersion": .number(Double(PeekerContract.protocolVersion)),
+                "pid": .number(Double(ProcessInfo.processInfo.processIdentifier)),
+            ]))
+        case let .command(invocation):
+            return await commandRouter.handle(invocation)
+        }
     }
 
     func registerSettingsWindow(_ window: NSWindow) {

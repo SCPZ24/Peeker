@@ -14,13 +14,19 @@ public final class CardRegistry {
     public private(set) var registrations: [FunctionCardRegistration]
     public private(set) var enabledIDs: [FeatureID]
     public private(set) var selectedID: FeatureID
+    public private(set) var lastOpenedAt: [FeatureID: Date]
     @ObservationIgnored private let onChange: @MainActor ([FeatureID], FeatureID) -> Void
+    @ObservationIgnored private let onEnablementChange: @MainActor (FeatureID, Bool) -> Void
+    @ObservationIgnored private let onOpened: @MainActor (FeatureID, Date) -> Void
 
     public init(
         registrations: [FunctionCardRegistration],
         enabledIDs: [FeatureID] = [],
         recentID: FeatureID? = nil,
-        onChange: @escaping @MainActor ([FeatureID], FeatureID) -> Void = { _, _ in }
+        lastOpenedAt: [FeatureID: Date] = [:],
+        onChange: @escaping @MainActor ([FeatureID], FeatureID) -> Void = { _, _ in },
+        onEnablementChange: @escaping @MainActor (FeatureID, Bool) -> Void = { _, _ in },
+        onOpened: @escaping @MainActor (FeatureID, Date) -> Void = { _, _ in }
     ) {
         let sorted = registrations.sorted { $0.defaultOrder < $1.defaultOrder }
         let valid = enabledIDs.filter { id in sorted.contains(where: { $0.id == id }) }
@@ -31,7 +37,10 @@ public final class CardRegistry {
         self.registrations = sorted
         self.enabledIDs = resolvedEnabled
         self.selectedID = resolvedSelected
+        self.lastOpenedAt = lastOpenedAt.filter { all in sorted.contains(where: { $0.id == all.key }) }
         self.onChange = onChange
+        self.onEnablementChange = onEnablementChange
+        self.onOpened = onOpened
     }
 
     public var enabledCards: [FunctionCardRegistration] {
@@ -42,10 +51,33 @@ public final class CardRegistry {
         registrations.first(where: { $0.id == selectedID && enabledIDs.contains($0.id) })
     }
 
-    public func select(_ id: FeatureID) {
+    public var compactCard: FunctionCardRegistration? {
+        enabledCards
+            .filter { $0.compactProvider?.isEligible() == true }
+            .sorted { lhs, rhs in
+                let left = lastOpenedAt[lhs.id]
+                let right = lastOpenedAt[rhs.id]
+                if left != right {
+                    if left == nil { return false }
+                    if right == nil { return true }
+                    return left! > right!
+                }
+                return enabledIDs.firstIndex(of: lhs.id)! < enabledIDs.firstIndex(of: rhs.id)!
+            }
+            .first
+    }
+
+    public func select(_ id: FeatureID, markOpened: Bool = true) {
         guard enabledIDs.contains(id) else { return }
         selectedID = id
+        if markOpened { recordOpened(id) }
         onChange(enabledIDs, selectedID)
+    }
+
+    public func recordOpened(_ id: FeatureID, at date: Date = Date()) {
+        guard enabledIDs.contains(id) else { return }
+        lastOpenedAt[id] = date
+        onOpened(id, date)
     }
 
     public func setEnabled(_ id: FeatureID, enabled: Bool) throws {
@@ -57,6 +89,7 @@ public final class CardRegistry {
             enabledIDs.removeAll { $0 == id }
             if selectedID == id { selectedID = enabledIDs[0] }
         }
+        onEnablementChange(id, enabled)
         onChange(enabledIDs, selectedID)
     }
 

@@ -47,7 +47,6 @@ final class PusherModuleTests: XCTestCase {
             clock: clock,
             resolver: BusinessDayResolver(),
             eventHub: TemporalEventHub(clock: clock, scheduler: PusherModuleTestScheduler()),
-            audio: PusherModuleTestAudio(),
             preferences: FeaturePreferenceStore(defaults: makeDefaults()),
             hostActions: FunctionCardHostActionsBridge().actions
         )
@@ -70,6 +69,3 @@ private actor PusherModuleTestScheduler: TemporalScheduling {
     func cancelAll() async {}
 }
 
-private actor PusherModuleTestAudio: AudioNotifying {
-    func playCompletionSound() async {}
-}

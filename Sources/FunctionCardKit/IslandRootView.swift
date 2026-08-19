@@ -18,6 +18,7 @@ public struct IslandRootView: View {
 
     public var body: some View {
         let interactivity = IslandContentInteractivity(isExpanded: coordinator.isExpanded)
+        let surface = coordinator.surfaceDescription
 
         ZStack(alignment: .top) {
             ZStack {
@@ -26,21 +27,19 @@ public struct IslandRootView: View {
                     .allowsHitTesting(interactivity.expandedAllowsHitTesting)
                     .accessibilityHidden(!interactivity.expandedAllowsHitTesting)
 
-                compactContent
+                collapsedContent(surface)
                     .opacity(1 - displayContext.expansionTarget)
                     .allowsHitTesting(interactivity.compactAllowsHitTesting)
                     .accessibilityHidden(!interactivity.compactAllowsHitTesting)
             }
             .frame(width: surfaceSize.width, height: surfaceSize.height)
-            .onGeometryChange(for: CGSize.self) { proxy in
-                proxy.size
-            } action: { size in
-                displayContext.updatePresentationSurfaceSize(size)
+            .onGeometryChange(for: CGSize.self) { $0.size } action: {
+                displayContext.updatePresentationSurfaceSize($0)
             }
-            .background(.black)
+            .background(surfaceDrawsBlack(surface) ? Color.black : Color.clear)
             .clipShape(surfaceShape)
             .foregroundStyle(.white)
-            .contentShape(surfaceShape)
+            .contentShape(Rectangle())
             .onHover { hovering in
                 if hovering { coordinator.pointerEntered() }
                 else { coordinator.pointerExited() }
@@ -51,29 +50,43 @@ public struct IslandRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    @ViewBuilder
+    private func collapsedContent(_ surface: IslandSurfaceDescription) -> some View {
+        switch surface {
+        case .resting:
+            Color.clear.accessibilityLabel("打开 Peeker")
+        case .compact:
+            compactContent
+        case let .prompt(prompt):
+            promptContent(prompt)
+        case .expanded:
+            Color.clear
+        }
+    }
+
     private var compactContent: some View {
         Group {
-            if let card = coordinator.registry.selectedCard {
+            if let card = coordinator.registry.compactCard,
+               let provider = card.compactProvider {
                 if let physicalNotchSize = displayContext.physicalNotchSize {
                     let sideReservation = IslandCompactLayout.sideReservation(
                         leadingWidth: card.metrics.compactLeadingWidth,
                         trailingWidth: card.metrics.compactTrailingWidth
                     )
                     HStack(spacing: 0) {
-                        card.makeCompactLeadingView()
+                        provider.makeLeadingView()
                             .frame(width: sideReservation, alignment: .leading)
                             .clipped()
-                        Color.clear
-                            .frame(width: physicalNotchSize.width)
-                        card.makeCompactTrailingView()
+                        Color.clear.frame(width: physicalNotchSize.width)
+                        provider.makeTrailingView()
                             .frame(width: sideReservation, alignment: .trailing)
                             .clipped()
                     }
                 } else {
                     HStack(spacing: 0) {
-                        card.makeCompactLeadingView()
+                        provider.makeLeadingView()
                         Spacer(minLength: 8)
-                        card.makeCompactTrailingView()
+                        provider.makeTrailingView()
                     }
                 }
             }
@@ -82,13 +95,26 @@ public struct IslandRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func promptContent(_ prompt: FunctionCardPrompt) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: prompt.systemImage)
+                .font(.title3.weight(.semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(prompt.moduleName).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text(prompt.summary).font(.subheadline).lineLimit(1).truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, displayContext.physicalNotchSize == nil ? 4 : displayContext.physicalNotchSize!.height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var expandedContent: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
                 ForEach(coordinator.registry.enabledCards) { card in
-                    Button {
-                        coordinator.select(card.id)
-                    } label: {
+                    Button { coordinator.select(card.id) } label: {
                         Label(card.name, systemImage: card.systemImage)
                             .labelStyle(.iconOnly)
                             .padding(.horizontal, 10)
@@ -102,12 +128,9 @@ public struct IslandRootView: View {
                     .accessibilityLabel(card.name)
                     .help(card.name)
                 }
-
                 Spacer(minLength: 4)
-
                 Button(action: openSettings) {
-                    Image(systemName: "gearshape.fill")
-                        .frame(width: 28, height: 28)
+                    Image(systemName: "gearshape.fill").frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("打开设置")
@@ -118,18 +141,18 @@ public struct IslandRootView: View {
         }
         .padding(IslandExpandedLayout.contentInsets)
         .background {
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture { coordinator.togglePin() }
+            Color.clear.contentShape(Rectangle()).onTapGesture { coordinator.togglePin() }
         }
+    }
+
+    private func surfaceDrawsBlack(_ surface: IslandSurfaceDescription) -> Bool {
+        if case .resting = surface { return false }
+        return true
     }
 
     private var surfaceShape: TopAttachedRoundedRectangle {
         let metrics = IslandSurfaceMetrics.cornerRadii(expansion: displayContext.expansionTarget)
-        return TopAttachedRoundedRectangle(
-            topCornerRadius: metrics.top,
-            bottomCornerRadius: metrics.bottom
-        )
+        return TopAttachedRoundedRectangle(topCornerRadius: metrics.top, bottomCornerRadius: metrics.bottom)
     }
 
     private var surfaceSize: CGSize {

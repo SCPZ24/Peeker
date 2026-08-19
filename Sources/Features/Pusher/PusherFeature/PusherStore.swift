@@ -3,6 +3,12 @@ import Observation
 import SwiftUI
 import PeekerCore
 
+public enum PusherMutationEvent: Sendable {
+    case created(PusherTask)
+    case deleted(PusherTask)
+    case moved(PusherTask, from: PusherStatus, to: PusherStatus)
+}
+
 enum PusherMovePreparation {
     case rejected
     case unchanged
@@ -26,6 +32,7 @@ public final class PusherStore {
     @ObservationIgnored private let eventHub: TemporalEventHub
     @ObservationIgnored private let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     @ObservationIgnored private let onCarryIncompleteChanged: @MainActor (Bool) -> Void
+    @ObservationIgnored private let onMutationEvent: @MainActor (PusherMutationEvent) -> Void
     @ObservationIgnored private var pendingMoveID: UUID?
     @ObservationIgnored private var hasDeferredWake = false
     @ObservationIgnored private var isBoardMutationPending = false
@@ -42,7 +49,8 @@ public final class PusherStore {
         carryIncomplete: Bool = true,
         refreshTime: RefreshTime = .midnight,
         onRefreshTimeChanged: @escaping @MainActor (RefreshTime) -> Void = { _ in },
-        onCarryIncompleteChanged: @escaping @MainActor (Bool) -> Void = { _ in }
+        onCarryIncompleteChanged: @escaping @MainActor (Bool) -> Void = { _ in },
+        onMutationEvent: @escaping @MainActor (PusherMutationEvent) -> Void = { _ in }
     ) {
         self.repository = repository
         self.clock = clock
@@ -52,6 +60,7 @@ public final class PusherStore {
         self.refreshTime = refreshTime
         self.onRefreshTimeChanged = onRefreshTimeChanged
         self.onCarryIncompleteChanged = onCarryIncompleteChanged
+        self.onMutationEvent = onMutationEvent
     }
 
     public func load() async {
@@ -100,6 +109,7 @@ public final class PusherStore {
             board = current
             try await repository.saveBoard(current)
             errorMessage = nil
+            onMutationEvent(.created(task))
             succeeded = true
         } catch {
             board = old
@@ -164,12 +174,14 @@ public final class PusherStore {
             return false
         }
         let old = current
+        let deletedTask = current.allTasks.first(where: { $0.id == taskID })
         let succeeded: Bool
         do {
             try current.remove(taskID: taskID)
             board = current
             try await repository.deleteTask(id: taskID)
             errorMessage = nil
+            if let deletedTask { onMutationEvent(.deleted(deletedTask)) }
             succeeded = true
         } catch {
             board = old
@@ -222,6 +234,11 @@ public final class PusherStore {
             )
             guard pendingMoveID == transaction.id else { return false }
             errorMessage = nil
+            if let before = transaction.before.allTasks.first(where: { task in
+                transaction.after.allTasks.contains(where: { $0.id == task.id && $0.status != task.status })
+            }), let after = transaction.after.allTasks.first(where: { $0.id == before.id }) {
+                onMutationEvent(.moved(after, from: before.status, to: after.status))
+            }
             await finishMoveTransaction()
             return true
         } catch {
@@ -380,7 +397,7 @@ public final class PusherStore {
     }
 
     private func scheduleBoundary() async {
-        await eventHub.set(boundaryKey, at: board?.businessDay.end, priority: 1) { [weak self] in
+        await eventHub.set(boundaryKey, at: board?.businessDay.end, priority: 1) { [weak self] _ in
             await self?.handleWake()
         }
     }
