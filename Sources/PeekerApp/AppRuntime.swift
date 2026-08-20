@@ -103,7 +103,11 @@ final class AppRuntime {
                 preferences.markCardOpened(id, at: date)
             }
         )
-        islandCoordinator = IslandCoordinator(registry: registry, promptCenter: promptCenter)
+        islandCoordinator = IslandCoordinator(
+            registry: registry,
+            promptCenter: promptCenter,
+            hoverExpansionDelaySeconds: preferences.hoverExpansionDelaySeconds
+        )
         hostActionsBridge.attach(to: islandCoordinator)
 
         let islandDisplayContext = IslandDisplayContext()
@@ -134,6 +138,9 @@ final class AppRuntime {
         )
         settingsStore.didSelectScreen = { [weak panelController] id in
             panelController?.setTargetScreenID(id)
+        }
+        settingsStore.didSetHoverExpansionDelay = { [weak islandCoordinator] seconds in
+            islandCoordinator?.setHoverExpansionDelay(seconds)
         }
         ipcServer = PeekerIPCServer { request in
             await AppRuntime.shared.handleIPC(request)

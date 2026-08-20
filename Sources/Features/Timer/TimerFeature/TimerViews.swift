@@ -39,10 +39,10 @@ public struct TimerFeatureDependencies {
 @MainActor
 public enum TimerFeatureFactory {
     static let metrics = FunctionCardMetrics(
-        compactWidth: 260,
+        compactWidth: 340,
         compactHeight: 32,
-        compactLeadingWidth: 144,
-        compactTrailingWidth: 72,
+        compactLeadingWidth: 208,
+        compactTrailingWidth: 136,
         expandedWidth: 800,
         expandedHeight: 460 * 5 / 7
     )
@@ -100,9 +100,12 @@ private struct TimerCompactLeadingView: View {
                 Circle()
                     .fill(Color(hex: task.colorHex))
                     .frame(width: 8, height: 8)
+                    .fixedSize()
+                    .layoutPriority(2)
                 Text(task.name)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .foregroundStyle(TimerIslandAppearance.primaryText)
             }
         } else {
@@ -122,6 +125,7 @@ private struct TimerCompactTrailingView: View {
                     .monospacedDigit()
                     .foregroundStyle(TimerIslandAppearance.secondaryText)
                     .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(2)
             }
         }
     }

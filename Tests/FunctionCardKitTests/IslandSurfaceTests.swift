@@ -110,22 +110,22 @@ final class IslandSurfaceTests: XCTestCase {
 
     func testCompactWidthCompressesTimerWingsBySixtyFourPointsAroundPhysicalNotch() {
         let width = IslandCompactLayout.width(
-            baseWidth: 260,
-            leadingWidth: 144,
-            trailingWidth: 72,
+            baseWidth: 340,
+            leadingWidth: 208,
+            trailingWidth: 136,
             physicalNotchWidth: 189,
             horizontalPadding: 10
         )
 
-        XCTAssertEqual(width, 369)
+        XCTAssertEqual(width, 497)
         XCTAssertEqual(
-            IslandCompactLayout.sideReservation(leadingWidth: 144, trailingWidth: 72),
-            80
+            IslandCompactLayout.sideReservation(leadingWidth: 208, trailingWidth: 136),
+            144
         )
         XCTAssertEqual(
             IslandCompactLayout.notchMidX(
-                leadingWidth: 144,
-                trailingWidth: 72,
+                leadingWidth: 208,
+                trailingWidth: 136,
                 physicalNotchWidth: 189,
                 horizontalPadding: 10
             ),
@@ -160,33 +160,33 @@ final class IslandSurfaceTests: XCTestCase {
 
     func testCompactWidthKeepsBaseWidthWithoutPhysicalNotch() {
         let width = IslandCompactLayout.width(
-            baseWidth: 260,
-            leadingWidth: 144,
-            trailingWidth: 72,
+            baseWidth: 340,
+            leadingWidth: 208,
+            trailingWidth: 136,
             physicalNotchWidth: nil,
             horizontalPadding: 10
         )
 
-        XCTAssertEqual(width, 260)
+        XCTAssertEqual(width, 340)
     }
 
     func testCardMetricsResolveCompactSizeAroundPhysicalNotch() {
         let metrics = FunctionCardMetrics(
-            compactWidth: 260,
+            compactWidth: 340,
             compactHeight: 32,
-            compactLeadingWidth: 144,
-            compactTrailingWidth: 72,
+            compactLeadingWidth: 208,
+            compactTrailingWidth: 136,
             expandedWidth: 800,
             expandedHeight: 460
         )
 
         XCTAssertEqual(
             metrics.compactSize(physicalNotchSize: CGSize(width: 189, height: 32)),
-            CGSize(width: 369, height: 32)
+            CGSize(width: 497, height: 32)
         )
         XCTAssertEqual(
             metrics.compactSize(physicalNotchSize: nil),
-            CGSize(width: 260, height: 32)
+            CGSize(width: 340, height: 32)
         )
     }
 

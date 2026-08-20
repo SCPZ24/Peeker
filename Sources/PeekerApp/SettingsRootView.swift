@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import PeekerCore
+import PeekerProtocol
 import FunctionCardKit
 
 struct SettingsRootView: View {
@@ -129,6 +130,17 @@ private struct GeneralSettingsView: View {
                     }
                 }
             }
+            Section("交互") {
+                LabeledContent("悬停展开延迟") {
+                    HStack(spacing: 12) {
+                        Slider(value: hoverExpansionDelayBinding, in: 0...2, step: 0.1)
+                            .frame(width: 220)
+                        Text(hoverExpansionDelayDescription)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 72, alignment: .trailing)
+                    }
+                }
+            }
             Section("启动") {
                 Toggle("登录时启动", isOn: launchBinding)
                 if store.launchStatus == .requiresApproval {
@@ -139,12 +151,28 @@ private struct GeneralSettingsView: View {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             }
+            Section("应用操作") {
+                Button("退出 Peeker", role: .destructive) { NSApp.terminate(nil) }
+            }
         }
         .formStyle(.grouped)
     }
 
     private var screenBinding: Binding<String?> {
         Binding(get: { store.selectedScreenID }, set: { store.selectScreen($0) })
+    }
+
+    private var hoverExpansionDelayBinding: Binding<Double> {
+        Binding(
+            get: { store.hoverExpansionDelaySeconds },
+            set: { store.setHoverExpansionDelay($0) }
+        )
+    }
+
+    private var hoverExpansionDelayDescription: String {
+        store.hoverExpansionDelaySeconds == 0
+            ? "立即展开"
+            : String(format: "%.1f 秒", store.hoverExpansionDelaySeconds)
     }
 
     private var launchBinding: Binding<Bool> {
@@ -237,15 +265,12 @@ private struct AboutSettingsView: View {
                     .disabled(store.updateState == .checking)
                 updateStatus
             }
-            Section {
-                Button("退出 Peeker", role: .destructive) { NSApp.terminate(nil) }
-            }
         }
         .formStyle(.grouped)
     }
 
     private var version: String {
-        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "2.0.0"
+        let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? PeekerContract.appVersion
         return "v\(bundleVersion)"
     }
 

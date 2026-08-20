@@ -10,7 +10,7 @@
 
 完全使用 Swift 实现的 macOS 原生效率工具。
 
-> 当前公开版本为 **v2.0.0**：包含静息岛、Timer 运行收敛态、统一提示、Scheduler 和 `peeker` CLI。下方截图是 v1 历史截图。
+> 当前公开版本为 **v2.0.1**：包含静息岛、Timer 运行收敛态、统一提示、Scheduler 和 `peeker` CLI。下方截图是 v1 历史截图。
 
 ## 运行效果（v1）
 

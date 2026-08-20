@@ -3,6 +3,15 @@ import XCTest
 
 @MainActor
 final class TimerFeatureMetricsTests: XCTestCase {
+    func testCompactSurfaceUsesRoomyRunningTaskLayout() {
+        let metrics = TimerFeatureFactory.metrics
+
+        XCTAssertEqual(metrics.compactWidth, 340)
+        XCTAssertEqual(metrics.compactHeight, 32)
+        XCTAssertEqual(metrics.compactLeadingWidth, 208)
+        XCTAssertEqual(metrics.compactTrailingWidth, 136)
+    }
+
     func testExpandedSurfaceKeepsItsWidthAndUsesFiveSeventhsOfThePreviousHeight() {
         let metrics = TimerFeatureFactory.metrics
 

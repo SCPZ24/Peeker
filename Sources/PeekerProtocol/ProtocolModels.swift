@@ -3,7 +3,7 @@ import Foundation
 public enum PeekerContract {
     public static let schemaVersion = 1
     public static let protocolVersion = 1
-    public static let appVersion = "2.0.0"
+    public static let appVersion = "2.0.1"
     public static let maximumFrameBytes = 16 * 1_024 * 1_024
 }
 

@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import PeekerCore
+import PeekerProtocol
 import MacPlatform
 
 @MainActor
@@ -9,12 +10,14 @@ import MacPlatform
 final class SettingsStore {
     var availableScreens: [ScreenDescriptor] = []
     var selectedScreenID: String?
+    private(set) var hoverExpansionDelaySeconds: Double
     var launchStatus: LaunchAtLoginStatus = .disabled
     var launchError: String?
     var runtimeError: String?
     var updateState: UpdateState = .idle
     let startupError: String?
     var didSelectScreen: ((String?) -> Void)?
+    var didSetHoverExpansionDelay: ((Double) -> Void)?
 
     private let preferences: AppPreferences
     private let screens: ScreenTopologyService
@@ -34,6 +37,7 @@ final class SettingsStore {
         self.updateChecker = updateChecker
         self.startupError = startupError
         selectedScreenID = preferences.targetScreenID
+        hoverExpansionDelaySeconds = preferences.hoverExpansionDelaySeconds
     }
 
     func load() async {
@@ -54,6 +58,12 @@ final class SettingsStore {
         selectedScreenID = id
         preferences.targetScreenID = id
         didSelectScreen?(id)
+    }
+
+    func setHoverExpansionDelay(_ seconds: Double) {
+        preferences.hoverExpansionDelaySeconds = seconds
+        hoverExpansionDelaySeconds = preferences.hoverExpansionDelaySeconds
+        didSetHoverExpansionDelay?(hoverExpansionDelaySeconds)
     }
 
     func refreshLaunchStatus() async {
@@ -81,7 +91,7 @@ final class SettingsStore {
                 updateState = .current("没有可用的公开版本。")
                 return
             }
-            let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "2.0.0"
+            let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? PeekerContract.appVersion
             if let localVersion = SemanticVersion(current),
                let remoteVersion = SemanticVersion(release.version),
                localVersion < remoteVersion {

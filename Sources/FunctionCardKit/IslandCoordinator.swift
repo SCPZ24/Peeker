@@ -16,11 +16,18 @@ public final class IslandCoordinator {
     public let registry: CardRegistry
     public let promptCenter: PromptCenter
     public private(set) var isPointerInside = false
+    public private(set) var hoverExpansionDelaySeconds: Double
+    @ObservationIgnored private var pendingExpansionTask: Task<Void, Never>?
     @ObservationIgnored private var collapseTask: Task<Void, Never>?
 
-    public init(registry: CardRegistry, promptCenter: PromptCenter = PromptCenter()) {
+    public init(
+        registry: CardRegistry,
+        promptCenter: PromptCenter = PromptCenter(),
+        hoverExpansionDelaySeconds: Double = 0
+    ) {
         self.registry = registry
         self.promptCenter = promptCenter
+        self.hoverExpansionDelaySeconds = Self.normalizedHoverExpansionDelay(hoverExpansionDelaySeconds)
         presentation = IslandPresentationState(base: registry.compactCard == nil ? .resting : .compact)
         promptCenter.setCurrentChangedHandler { [weak self] prompt in
             guard let self, !self.isExpanded else { return }
@@ -28,7 +35,10 @@ public final class IslandCoordinator {
         }
     }
 
-    deinit { collapseTask?.cancel() }
+    deinit {
+        pendingExpansionTask?.cancel()
+        collapseTask?.cancel()
+    }
 
     public var isExpanded: Bool {
         switch presentation.base {
@@ -51,23 +61,37 @@ public final class IslandCoordinator {
     public func pointerEntered() {
         isPointerInside = true
         collapseTask?.cancel()
-        let featureID: FeatureID
+        pendingExpansionTask?.cancel()
+
         switch surfaceDescription {
-        case let .prompt(prompt):
-            promptCenter.setPlaybackAllowed(false)
-            _ = promptCenter.consumeCurrent()
-            featureID = prompt.sourceID
-        case let .compact(id), let .resting(id), let .expanded(id):
-            featureID = id
+        case .prompt, .expanded:
+            expandCurrentSurface()
+        case .compact, .resting:
+            guard hoverExpansionDelaySeconds > 0 else {
+                expandCurrentSurface()
+                return
+            }
+            let delay = hoverExpansionDelaySeconds
+            pendingExpansionTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, let self, self.isPointerInside else { return }
+                self.pendingExpansionTask = nil
+                self.expandCurrentSurface()
+            }
         }
-        registry.select(featureID)
-        promptCenter.setPlaybackAllowed(false)
-        mutatePresentation { $0.pointerEntered(featureID: featureID) }
     }
 
     public func pointerExited() {
         isPointerInside = false
+        pendingExpansionTask?.cancel()
+        pendingExpansionTask = nil
         scheduleCollapseIfAllowed()
+    }
+
+    public func setHoverExpansionDelay(_ seconds: Double) {
+        hoverExpansionDelaySeconds = Self.normalizedHoverExpansionDelay(seconds)
+        pendingExpansionTask?.cancel()
+        pendingExpansionTask = nil
     }
 
     private func scheduleCollapseIfAllowed() {
@@ -124,6 +148,26 @@ public final class IslandCoordinator {
 
     private var resolvedBase: IslandBaseState {
         registry.compactCard == nil ? .resting : .compact
+    }
+
+    private func expandCurrentSurface() {
+        let featureID: FeatureID
+        switch surfaceDescription {
+        case let .prompt(prompt):
+            promptCenter.setPlaybackAllowed(false)
+            _ = promptCenter.consumeCurrent()
+            featureID = prompt.sourceID
+        case let .compact(id), let .resting(id), let .expanded(id):
+            featureID = id
+        }
+        registry.select(featureID)
+        promptCenter.setPlaybackAllowed(false)
+        mutatePresentation { $0.pointerEntered(featureID: featureID) }
+    }
+
+    private static func normalizedHoverExpansionDelay(_ value: Double) -> Double {
+        guard value.isFinite else { return 0 }
+        return (min(2, max(0, value)) * 10).rounded() / 10
     }
 
     private func finishExpansion() {

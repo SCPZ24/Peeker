@@ -2,26 +2,14 @@ import Foundation
 import PeekerIPC
 import PeekerProtocol
 
-private let help = """
-Usage: peeker <command>
-
-Commands:
-  --help                              Show this help
-  --version                           Print CLI and protocol versions as JSON
-  status                              Report whether Peeker App is running
-  timer <command> [arguments]         Manage Timer
-  pusher <command> [arguments]        Manage Pusher
-  scheduler <command> [arguments]     Manage Scheduler
-
-All command results except --help are one-line JSON. Peeker App must already be running
-for feature commands; the CLI never starts the App or opens Peeker.sqlite.
-"""
-
-@main
 private enum PeekerCLI {
-    static func main() async {
+    static func run() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        if arguments == ["--help"] || arguments == ["-h"] {
+        if let helpIndex = arguments.firstIndex(where: { $0 == "--help" || $0 == "-h" }) {
+            guard helpIndex == arguments.index(before: arguments.endIndex),
+                  let help = CLIHelp.text(for: Array(arguments[..<helpIndex])) else {
+                fail(PeekerError(code: "invalid_usage", message: "Unknown or malformed help path"))
+            }
             print(help)
             return
         }
@@ -36,11 +24,11 @@ private enum PeekerCLI {
             fail(PeekerError(code: "invalid_usage", message: "A command is required"))
         }
 
-        let client = PeekerIPCClient()
         if command == "status" {
             guard arguments.count == 1 else {
                 fail(PeekerError(code: "invalid_usage", message: "status accepts no arguments"))
             }
+            let client = PeekerIPCClient()
             do {
                 let envelope = try await client.request(.status)
                 finish(envelope)
@@ -59,6 +47,7 @@ private enum PeekerCLI {
         guard ["timer", "pusher", "scheduler"].contains(command), arguments.count >= 2 else {
             fail(PeekerError(code: "invalid_usage", message: "Unknown or incomplete command"))
         }
+        let client = PeekerIPCClient()
         let featureArguments = Array(arguments.dropFirst())
         let category = commandCategory(for: featureArguments)
         do {
@@ -107,3 +96,5 @@ private enum PeekerCLI {
         (toError ? FileHandle.standardError : FileHandle.standardOutput).write(output)
     }
 }
+
+await PeekerCLI.run()

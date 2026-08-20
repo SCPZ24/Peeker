@@ -35,6 +35,7 @@ public final class AppPreferences {
         static let cardConfigurationVersion = "cardConfigurationVersion"
         static let knownCardIDs = "knownCardIDs"
         static let lastOpenedCardDates = "lastOpenedCardDates"
+        static let hoverExpansionDelaySeconds = "hoverExpansionDelaySeconds"
     }
 
     private let defaults: UserDefaults
@@ -46,6 +47,16 @@ public final class AppPreferences {
     public var targetScreenID: String? {
         get { defaults.string(forKey: Key.targetScreen) }
         set { defaults.set(newValue, forKey: Key.targetScreen) }
+    }
+
+    public var hoverExpansionDelaySeconds: Double {
+        get { Self.normalizedHoverExpansionDelay(defaults.double(forKey: Key.hoverExpansionDelaySeconds)) }
+        set { defaults.set(Self.normalizedHoverExpansionDelay(newValue), forKey: Key.hoverExpansionDelaySeconds) }
+    }
+
+    public static func normalizedHoverExpansionDelay(_ value: Double) -> Double {
+        guard value.isFinite else { return 0 }
+        return (min(2, max(0, value)) * 10).rounded() / 10
     }
 
     public var enabledCardIDs: [FeatureID] {

@@ -1,5 +1,6 @@
 import AppKit
 import FunctionCardKit
+import PeekerCore
 import SwiftUI
 
 @MainActor
@@ -9,12 +10,20 @@ public enum SchedulerFeatureFactory {
         expandedWidth: 1120, expandedHeight: 700
     )
 
-    public static func make(store: SchedulerStore) -> FunctionCardRegistration {
+    public static func make(
+        store: SchedulerStore,
+        setPopoverPresented: @escaping @MainActor (Bool) -> Void = { _ in }
+    ) -> FunctionCardRegistration {
         Task { await store.load() }
         return FunctionCardRegistration(
             id: .scheduler, name: "Scheduler", systemImage: "calendar",
             defaultOrder: 2, introducedConfigurationVersion: 2, metrics: metrics,
-            makeExpandedView: { AnyView(SchedulerWeekView(store: store)) },
+            makeExpandedView: {
+                AnyView(SchedulerWeekView(
+                    store: store,
+                    setPopoverPresented: setPopoverPresented
+                ))
+            },
             makeSettingsView: { AnyView(SchedulerSettingsView(store: store)) }
         )
     }
@@ -22,6 +31,7 @@ public enum SchedulerFeatureFactory {
 
 private struct SchedulerWeekView: View {
     @Bindable var store: SchedulerStore
+    let setPopoverPresented: @MainActor (Bool) -> Void
     @State private var draft: SchedulerEvent?
     private let hourHeight: CGFloat = 52
 
@@ -39,6 +49,12 @@ private struct SchedulerWeekView: View {
                 }
                 .onAppear { proxy.scrollTo(initialHour, anchor: .top) }
             }
+        }
+        .onChange(of: draft?.id) { _, newValue in
+            setPopoverPresented(newValue != nil)
+        }
+        .onDisappear {
+            setPopoverPresented(false)
         }
         .popover(item: $draft) { event in
             SchedulerEventEditor(
@@ -65,6 +81,10 @@ private struct SchedulerWeekView: View {
                     }
                 } : nil
             )
+            .environment(\.colorScheme, .light)
+            .foregroundStyle(Color.black)
+            .foregroundColor(.black)
+            .tint(.accentColor)
         }
         .overlay {
             if store.isLoading { ProgressView() }
@@ -185,6 +205,7 @@ private struct SchedulerWeekView: View {
         let start = Calendar.current.date(byAdding: .minute, value: minute, to: dayStart)!
         draft = try? SchedulerEvent(
             title: "新日程",
+            colorHex: PeekerPresetColor.lakeBlue.rawValue,
             time: .timed(
                 startMilliseconds: Int64(start.timeIntervalSince1970 * 1000),
                 endMilliseconds: Int64(start.addingTimeInterval(1_800).timeIntervalSince1970 * 1000),
@@ -198,7 +219,11 @@ private struct SchedulerWeekView: View {
         let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
         guard let start = try? SchedulerLocalDate(year: components.year!, month: components.month!, day: components.day!),
               let end = start.adding(days: 1, in: .current) else { return }
-        draft = try? SchedulerEvent(title: "新日程", time: .allDay(start: start, endExclusive: end))
+        draft = try? SchedulerEvent(
+            title: "新日程",
+            colorHex: PeekerPresetColor.lakeBlue.rawValue,
+            time: .allDay(start: start, endExclusive: end)
+        )
     }
 }
 
@@ -235,72 +260,243 @@ private struct SchedulerEventEditor: View {
     @State private var notes: String
     @State private var location: String
     @State private var color: String
-    @State private var allDay: Bool
-    @State private var start: Date
-    @State private var end: Date
+    @State private var timeDraft: SchedulerEventTimeFormDraft
     @State private var frequency: String
     @State private var interval: Int
-    @State private var error: String?
 
     init(event: SchedulerEvent, onCancel: @escaping () -> Void, onSave: @escaping (SchedulerEvent) -> Void, onDelete: (() -> Void)?) {
         original=event; self.onCancel=onCancel; self.onSave=onSave; self.onDelete=onDelete
         _title=State(initialValue:event.title); _notes=State(initialValue:event.notes ?? ""); _location=State(initialValue:event.location ?? "")
-        _color=State(initialValue:event.colorHex); _frequency=State(initialValue:event.recurrence?.frequency.rawValue ?? "none")
+        _color=State(initialValue:event.colorHex); _timeDraft=State(initialValue:SchedulerEventTimeFormDraft(time:event.time))
+        _frequency=State(initialValue:event.recurrence?.frequency.rawValue ?? "none")
         _interval=State(initialValue:event.recurrence?.interval ?? 1)
-        switch event.time {
-        case let .timed(start,end,_):
-            _allDay=State(initialValue:false); _start=State(initialValue:Date(timeIntervalSince1970:Double(start)/1000)); _end=State(initialValue:Date(timeIntervalSince1970:Double(end)/1000))
-        case let .allDay(start,end):
-            _allDay=State(initialValue:true); _start=State(initialValue:start.date(in:.current) ?? Date()); _end=State(initialValue:end.date(in:.current) ?? Date().addingTimeInterval(86_400))
-        }
     }
 
     var body: some View {
         Form {
-            if original.sourceID != nil { Text("导入日程的本地修改会在下次来源刷新时被覆盖。 ").font(.caption).foregroundStyle(.orange) }
-            TextField("标题",text:$title)
-            Toggle("全天",isOn:$allDay)
-            DatePicker("开始",selection:$start,displayedComponents:allDay ? [.date] : [.date,.hourAndMinute])
-            DatePicker("结束",selection:$end,displayedComponents:allDay ? [.date] : [.date,.hourAndMinute])
-            TextField("备注",text:$notes,axis:.vertical)
-            TextField("地点",text:$location)
-            TextField("颜色 (#RRGGBB)",text:$color)
-            Picker("重复",selection:$frequency) {
-                Text("无").tag("none")
-                ForEach(SchedulerFrequency.allCases,id:\.rawValue) { Text($0.rawValue).tag($0.rawValue) }
+            if original.sourceID != nil {
+                Text("导入日程的本地修改会在下次来源刷新时被覆盖。")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
             }
-            if frequency != "none" { Stepper("间隔：\(interval)",value:$interval,in:1...365) }
-            if let error { Text(error).foregroundStyle(.red).font(.caption) }
+            TextField(
+                "标题",
+                text: $title,
+                prompt: Text("标题").foregroundStyle(.secondary)
+            )
+            .foregroundStyle(Color.black)
+            Toggle("全天", isOn: $timeDraft.allDay)
+                .foregroundStyle(Color.black)
+            SchedulerDateTimeInputRow(
+                title: "开始",
+                draft: $timeDraft.start,
+                includesTime: !timeDraft.allDay
+            )
+            SchedulerDateTimeInputRow(
+                title: "结束",
+                draft: $timeDraft.end,
+                includesTime: !timeDraft.allDay
+            )
+            TextField(
+                "备注",
+                text: $notes,
+                prompt: Text("备注").foregroundStyle(.secondary),
+                axis: .vertical
+            )
+            .foregroundStyle(Color.black)
+            TextField(
+                "地点",
+                text: $location,
+                prompt: Text("地点").foregroundStyle(.secondary)
+            )
+            .foregroundStyle(Color.black)
+            SchedulerPresetColorPicker(colorHex: $color)
+            Picker("重复", selection: $frequency) {
+                Text("无").tag("none")
+                ForEach(SchedulerFrequency.allCases, id: \.rawValue) {
+                    Text($0.rawValue).tag($0.rawValue)
+                }
+            }
+            .foregroundStyle(Color.black)
+            if frequency != "none" {
+                Stepper("间隔：\(interval)", value: $interval, in: 1...365)
+                    .foregroundStyle(Color.black)
+            }
+            if timeDraft.resolvedTime() == nil {
+                Text("请输入真实有效的日期和时间，并确保结束晚于开始。")
+                    .foregroundStyle(.red)
+                    .font(.caption)
+            }
             HStack {
-                if let onDelete { Button("删除",role:.destructive,action:onDelete) }
+                if let onDelete { Button("删除", role: .destructive, action: onDelete) }
                 Spacer()
-                Button("取消",action:onCancel)
-                Button("保存",action:save).keyboardShortcut(.defaultAction)
+                Button("取消", action: onCancel)
+                Button("保存", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(updatedEvent == nil)
             }
         }
-        .padding(16).frame(width:420)
+        .foregroundStyle(Color.black)
+        .foregroundColor(.black)
+        .padding(16)
+        .frame(width: 420)
+    }
+
+    private var updatedEvent: SchedulerEvent? {
+        guard let time = timeDraft.resolvedTime() else { return nil }
+        let recurrence: SchedulerRecurrence?
+        if frequency == "none" {
+            recurrence = nil
+        } else {
+            guard let frequency = SchedulerFrequency(rawValue: frequency),
+                  let value = try? SchedulerRecurrence(frequency: frequency, interval: interval) else {
+                return nil
+            }
+            recurrence = value
+        }
+        return try? SchedulerEvent(
+            id: original.id,
+            sourceID: original.sourceID,
+            sourceUID: original.sourceUID,
+            sourceSegmentKey: original.sourceSegmentKey,
+            title: title,
+            notes: notes.isEmpty ? nil : notes,
+            location: location.isEmpty ? nil : location,
+            colorHex: color,
+            time: time,
+            recurrence: recurrence,
+            createdAtMilliseconds: original.createdAtMilliseconds,
+            updatedAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000)
+        )
     }
 
     private func save() {
-        do {
-            let time:SchedulerEventTime
-            if allDay {
-                let c=Calendar.current
-                let s=c.dateComponents([.year,.month,.day],from:start), e=c.dateComponents([.year,.month,.day],from:end)
-                let sd=try SchedulerLocalDate(year:s.year!,month:s.month!,day:s.day!), ed=try SchedulerLocalDate(year:e.year!,month:e.month!,day:e.day!)
-                time = .allDay(start:sd,endExclusive:ed)
-            } else {
-                time = .timed(startMilliseconds:Int64(start.timeIntervalSince1970*1000),endMilliseconds:Int64(end.timeIntervalSince1970*1000),timeZoneID:TimeZone.current.identifier)
+        guard let updatedEvent else { return }
+        onSave(updatedEvent)
+    }
+}
+
+private struct SchedulerDateTimeInputRow: View {
+    let title: String
+    @Binding var draft: SchedulerTimeInputDraft
+    let includesTime: Bool
+
+    var body: some View {
+        LabeledContent(title) {
+            HStack(spacing: 8) {
+                SchedulerTimeComponentField(
+                    unit: "月",
+                    placeholder: "MM",
+                    value: $draft.month
+                )
+                SchedulerTimeComponentField(
+                    unit: "日",
+                    placeholder: "DD",
+                    value: $draft.day
+                )
+                if includesTime {
+                    SchedulerTimeComponentField(
+                        unit: "时",
+                        placeholder: "HH",
+                        value: $draft.hour
+                    )
+                    SchedulerTimeComponentField(
+                        unit: "分",
+                        placeholder: "mm",
+                        value: $draft.minute
+                    )
+                }
             }
-            let recurrence = frequency == "none" ? nil : try SchedulerRecurrence(frequency:SchedulerFrequency(rawValue:frequency)!,interval:interval)
-            let value=try SchedulerEvent(
-                id:original.id,sourceID:original.sourceID,sourceUID:original.sourceUID,sourceSegmentKey:original.sourceSegmentKey,
-                title:title,notes:notes.isEmpty ? nil : notes,location:location.isEmpty ? nil : location,colorHex:color,
-                time:time,recurrence:recurrence,createdAtMilliseconds:original.createdAtMilliseconds,
-                updatedAtMilliseconds:Int64(Date().timeIntervalSince1970*1000)
+        }
+        .foregroundStyle(Color.black)
+        .foregroundColor(.black)
+    }
+}
+
+private struct SchedulerTimeComponentField: View {
+    let unit: String
+    let placeholder: String
+    @Binding var value: String
+
+    var body: some View {
+        VStack(spacing: 2) {
+            TextField(
+                unit,
+                text: $value,
+                prompt: Text(placeholder).foregroundStyle(.secondary)
             )
-            onSave(value)
-        } catch { self.error=error.localizedDescription }
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.center)
+            .font(.body.monospacedDigit())
+            .foregroundStyle(Color.black)
+            .foregroundColor(.black)
+            .frame(width: 46)
+            .accessibilityLabel(unit)
+
+            Text(unit)
+                .font(.caption2)
+                .foregroundStyle(Color.black.opacity(0.7))
+        }
+    }
+}
+
+private struct SchedulerPresetColorPicker: View {
+    @Binding var colorHex: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("颜色")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                if !isPresetColor {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Color(hex: colorHex))
+                            .frame(width: 18, height: 18)
+                        Text("当前颜色")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.trailing, 4)
+                }
+
+                ForEach(PeekerPresetColor.allCases) { preset in
+                    let isSelected = colorHex.caseInsensitiveCompare(preset.rawValue) == .orderedSame
+                    Button {
+                        colorHex = preset.rawValue
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(Color(hex: preset.rawValue))
+                            Circle()
+                                .strokeBorder(
+                                    isSelected ? Color.primary : Color.clear,
+                                    lineWidth: 2
+                                )
+                            if isSelected {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                        .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help(preset.localizedName)
+                    .accessibilityLabel(preset.localizedName)
+                    .accessibilityValue(isSelected ? "已选择" : "未选择")
+                }
+            }
+        }
+    }
+
+    private var isPresetColor: Bool {
+        PeekerPresetColor.allCases.contains {
+            colorHex.caseInsensitiveCompare($0.rawValue) == .orderedSame
+        }
     }
 }
 

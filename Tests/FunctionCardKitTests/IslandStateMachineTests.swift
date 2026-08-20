@@ -30,6 +30,58 @@ final class IslandStateMachineTests: XCTestCase {
     }
 
     @MainActor
+    func testZeroHoverDelayExpandsImmediately() {
+        let coordinator = makeCoordinator(hoverExpansionDelaySeconds: 0)
+
+        coordinator.pointerEntered()
+
+        XCTAssertEqual(coordinator.presentation.base, .hoverExpanded(featureID: timer))
+    }
+
+    @MainActor
+    func testNonzeroHoverDelayWaitsBeforeExpanding() async {
+        let coordinator = makeCoordinator(hoverExpansionDelaySeconds: 0.1)
+
+        coordinator.pointerEntered()
+        XCTAssertEqual(coordinator.presentation.base, .compact)
+
+        try? await Task.sleep(for: .milliseconds(130))
+        XCTAssertEqual(coordinator.presentation.base, .hoverExpanded(featureID: timer))
+    }
+
+    @MainActor
+    func testPointerExitCancelsPendingHoverExpansion() async {
+        let coordinator = makeCoordinator(hoverExpansionDelaySeconds: 0.1)
+
+        coordinator.pointerEntered()
+        try? await Task.sleep(for: .milliseconds(30))
+        coordinator.pointerExited()
+        try? await Task.sleep(for: .milliseconds(130))
+
+        XCTAssertEqual(coordinator.presentation.base, .compact)
+        XCTAssertEqual(coordinator.registry.selectedID, timer)
+        XCTAssertNil(coordinator.registry.lastOpenedAt[timer])
+    }
+
+    @MainActor
+    func testPromptBypassesHoverExpansionDelay() async {
+        let coordinator = makeCoordinator(hoverExpansionDelaySeconds: 2)
+        coordinator.publishPrompt(FunctionCardPrompt(
+            token: "prompt",
+            sourceID: timer,
+            systemImage: "timer",
+            moduleName: "Timer",
+            summary: "Done"
+        ))
+        try? await Task.sleep(for: .milliseconds(10))
+
+        coordinator.pointerEntered()
+
+        XCTAssertEqual(coordinator.presentation.base, .hoverExpanded(featureID: timer))
+        XCTAssertNil(coordinator.promptCenter.current)
+    }
+
+    @MainActor
     func testEscapeOutsideWhileCompactDoesNotPublishPresentationChange() async {
         let coordinator = makeCoordinator()
         let unexpectedChange = expectation(description: "compact escape must not publish")
@@ -156,6 +208,19 @@ final class IslandStateMachineTests: XCTestCase {
     }
 
     @MainActor
+    func testPresentedPopoverKeepsIslandExpandedAfterPointerExit() async {
+        let coordinator = makeCoordinator()
+        coordinator.pointerEntered()
+        coordinator.setPopoverPresented(true)
+        coordinator.pointerExited()
+
+        try? await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertEqual(coordinator.presentation.base, .hoverExpanded(featureID: timer))
+        XCTAssertTrue(coordinator.presentation.blockers.isPopoverPresented)
+    }
+
+    @MainActor
     func testClearingPopoverOutsideIslandSchedulesCollapse() async {
         let registry = CardRegistry(registrations: [makeRegistration(timer, order: 0)])
         let coordinator = IslandCoordinator(registry: registry)
@@ -170,8 +235,11 @@ final class IslandStateMachineTests: XCTestCase {
     }
 
     @MainActor
-    private func makeCoordinator() -> IslandCoordinator {
-        IslandCoordinator(registry: CardRegistry(registrations: [makeRegistration(timer, order: 0)]))
+    private func makeCoordinator(hoverExpansionDelaySeconds: Double = 0) -> IslandCoordinator {
+        IslandCoordinator(
+            registry: CardRegistry(registrations: [makeRegistration(timer, order: 0)]),
+            hoverExpansionDelaySeconds: hoverExpansionDelaySeconds
+        )
     }
 
     @MainActor

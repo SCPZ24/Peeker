@@ -37,6 +37,21 @@ case "$CLI_DESCRIPTION" in
   *x86_64*) echo "CLI binary unexpectedly contains x86_64: $CLI_DESCRIPTION" >&2; exit 1 ;;
 esac
 CLI_VERSION_JSON="$("$CLI_EXECUTABLE" --version)"
+CLI_ROOT_HELP="$("$CLI_EXECUTABLE" --help)"
+CLI_FEATURE_HELP="$("$CLI_EXECUTABLE" scheduler --help)"
+CLI_LEAF_HELP="$("$CLI_EXECUTABLE" scheduler source import --help)"
+case "$CLI_ROOT_HELP" in
+  *"Usage: peeker <command>"*) ;;
+  *) echo "embedded CLI root help is invalid" >&2; exit 1 ;;
+esac
+case "$CLI_FEATURE_HELP" in
+  *"Usage: peeker scheduler <command> [arguments]"*) ;;
+  *) echo "embedded CLI feature help is invalid" >&2; exit 1 ;;
+esac
+case "$CLI_LEAF_HELP" in
+  *"Usage: peeker scheduler source import --file <path>"*) ;;
+  *) echo "embedded CLI leaf help is invalid" >&2; exit 1 ;;
+esac
 /usr/bin/ruby -rjson -e '
   value = JSON.parse(ARGV.fetch(0))
   abort "invalid CLI schema" unless value["schemaVersion"] == 1 && value["ok"] == true

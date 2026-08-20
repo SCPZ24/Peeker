@@ -16,6 +16,39 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertNil(preferences.recentCardID)
     }
 
+    func testHoverExpansionDelayDefaultsToImmediate() {
+        let preferences = AppPreferences(defaults: makeDefaults())
+
+        XCTAssertEqual(preferences.hoverExpansionDelaySeconds, 0)
+    }
+
+    func testHoverExpansionDelayPersistsAndNormalizesToTenths() {
+        let defaults = makeDefaults()
+        let preferences = AppPreferences(defaults: defaults)
+
+        preferences.hoverExpansionDelaySeconds = 0.26
+
+        XCTAssertEqual(preferences.hoverExpansionDelaySeconds, 0.3)
+        XCTAssertEqual(defaults.double(forKey: "hoverExpansionDelaySeconds"), 0.3)
+    }
+
+    func testHoverExpansionDelayClampsBoundsAndRejectsNonFiniteValues() {
+        let defaults = makeDefaults()
+        let preferences = AppPreferences(defaults: defaults)
+
+        preferences.hoverExpansionDelaySeconds = -0.5
+        XCTAssertEqual(preferences.hoverExpansionDelaySeconds, 0)
+
+        preferences.hoverExpansionDelaySeconds = 3
+        XCTAssertEqual(preferences.hoverExpansionDelaySeconds, 2)
+
+        defaults.set(Double.infinity, forKey: "hoverExpansionDelaySeconds")
+        XCTAssertEqual(preferences.hoverExpansionDelaySeconds, 0)
+
+        defaults.set(Double.nan, forKey: "hoverExpansionDelaySeconds")
+        XCTAssertEqual(preferences.hoverExpansionDelaySeconds, 0)
+    }
+
     func testFreshInstallEnablesAllCardsInDefaultOrder() {
         let preferences = AppPreferences(defaults: makeDefaults())
         let snapshot = preferences.upgradedCards(registrations: registrations())

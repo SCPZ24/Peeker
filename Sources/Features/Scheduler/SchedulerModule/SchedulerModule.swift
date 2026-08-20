@@ -32,7 +32,10 @@ public struct SchedulerModule: FunctionCardModule {
             revokePrompt: context.hostActions.revokePrompt,
             onReminderChanged: { preferences.reminderMinutes = $0 }
         )
-        let card = SchedulerFeatureFactory.make(store: store)
+        let card = SchedulerFeatureFactory.make(
+            store: store,
+            setPopoverPresented: context.hostActions.setPopoverPresented
+        )
         return FunctionCardRuntimeRegistration(
             card: card,
             handleCommand: { invocation in await SchedulerCommandHandler(store: store, hostActions: context.hostActions).handle(invocation.arguments) },
