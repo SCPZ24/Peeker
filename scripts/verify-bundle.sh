@@ -9,6 +9,7 @@ EXECUTABLE="$APP_BUNDLE/Contents/MacOS/Peeker"
 CLI_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/peeker-cli"
 AGENTOR_HELPER="$APP_BUNDLE/Contents/MacOS/peeker-agentor-hook"
 AGENTOR_RESOURCES="$APP_BUNDLE/Contents/Resources/Agentor"
+AGENTOR_LOGOS="$AGENTOR_RESOURCES/logos"
 
 test -x "$EXECUTABLE"
 test -x "$CLI_EXECUTABLE"
@@ -59,6 +60,27 @@ esac
     abort "Agentor resource hash mismatch: #{path}" unless actual == expected
   end
 ' "$AGENTOR_RESOURCES"
+EXPECTED_AGENTOR_LOGOS=(claude codex hermes opencode pi)
+test "$(find "$AGENTOR_LOGOS" -maxdepth 1 -type f -name '*.svg' | wc -l | tr -d ' ')" = "${#EXPECTED_AGENTOR_LOGOS[@]}"
+for logo in "${EXPECTED_AGENTOR_LOGOS[@]}"; do
+  LOGO_FILE="$AGENTOR_LOGOS/$logo.svg"
+  test -s "$LOGO_FILE"
+  case "$(/usr/bin/file "$LOGO_FILE")" in
+    *"SVG Scalable Vector Graphics image"*) ;;
+    *) echo "invalid Agentor logo: $LOGO_FILE" >&2; exit 1 ;;
+  esac
+  /usr/bin/sips -g pixelWidth -g pixelHeight "$LOGO_FILE" >/dev/null
+  LOGO_PREVIEW="$(mktemp -t "peeker-agentor-$logo").png"
+  if ! RENDER_OUTPUT="$(CORESVG_VERBOSE=1 /usr/bin/sips -s format png --resampleHeightWidth 64 64 "$LOGO_FILE" --out "$LOGO_PREVIEW" 2>&1)"; then
+    rm -f "$LOGO_PREVIEW"
+    echo "failed to render Agentor logo: $LOGO_FILE" >&2
+    exit 1
+  fi
+  rm -f "$LOGO_PREVIEW"
+  case "$RENDER_OUTPUT" in
+    *Warning*|*Error*) echo "CoreSVG rejected Agentor logo: $LOGO_FILE" >&2; exit 1 ;;
+  esac
+done
 CLI_VERSION_JSON="$("$CLI_EXECUTABLE" --version)"
 CLI_ROOT_HELP="$("$CLI_EXECUTABLE" --help)"
 CLI_FEATURE_HELP="$("$CLI_EXECUTABLE" scheduler --help)"

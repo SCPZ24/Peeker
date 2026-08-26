@@ -40,7 +40,7 @@ private struct AgentorCompactLeadingView: View {
             let elapsed = timeline.date.timeIntervalSinceReferenceDate
             HStack(spacing: 7) {
                 if store.activeSessionCount == 1, let session = store.sessions.first {
-                    AgentorGlyph(agent: session.key.agent)
+                    AgentorLogo(agent: session.key.agent)
                         .overlay {
                             Circle()
                                 .trim(from: 0.08, to: 0.42)
@@ -50,7 +50,7 @@ private struct AgentorCompactLeadingView: View {
                         }
                 } else if store.activeSessionCount == 2 {
                     ForEach(Array(store.sessions.prefix(2).enumerated()), id: \.element.key) { index, session in
-                        AgentorGlyph(agent: session.key.agent)
+                        AgentorLogo(agent: session.key.agent)
                             .opacity(reduceMotion ? 1 : 0.6 + 0.4 * breathing(elapsed + Double(index) * 0.8))
                     }
                 } else {
@@ -108,27 +108,6 @@ private struct AgentorCompactTrailingView: View {
     }
 }
 
-private struct AgentorGlyph: View {
-    let agent: AgentKind
-
-    var body: some View {
-        Image(systemName: systemImage)
-            .font(.body.weight(.semibold))
-            .frame(width: 22, height: 22)
-            .accessibilityLabel(agent.displayName)
-    }
-
-    private var systemImage: String {
-        switch agent {
-        case .claude: "sparkles"
-        case .openCode: "chevron.left.forwardslash.chevron.right"
-        case .hermes: "paperplane"
-        case .pi: "function"
-        case .codex: "terminal"
-        }
-    }
-}
-
 private struct AgentorExpandedView: View {
     @Bindable var store: AgentorStore
 
@@ -167,7 +146,7 @@ private struct AgentorSessionRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                AgentorGlyph(agent: session.key.agent)
+                AgentorLogo(agent: session.key.agent)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.key.agent.displayName).font(.caption).foregroundStyle(.white.opacity(0.72))
                     Text(session.label).font(.headline).foregroundStyle(.white).lineLimit(1)
@@ -185,7 +164,7 @@ private struct AgentorSessionRow: View {
                 }
                 Text(session.status.displayName)
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(session.status == .waitingForAnswer ? .orange : .white.opacity(0.82))
+                    .foregroundStyle(.white.opacity(0.82))
             }
             if let notice = session.resolutionNotice {
                 Label(notice, systemImage: "checkmark.circle")
@@ -197,6 +176,14 @@ private struct AgentorSessionRow: View {
         }
         .padding(12)
         .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            AgentorSessionBorder(
+                status: session.status,
+                generation: session.generation,
+                startedAt: session.startedAt,
+                cornerRadius: 12
+            )
+        }
     }
 
     private func duration(_ interval: TimeInterval) -> String {
@@ -233,7 +220,7 @@ private struct AgentorQuestionForm: View {
             }
         }
         .padding(10)
-        .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
         .onChange(of: focusedQuestionID) { _, value in store.setEditingText(value != nil) }
         .onDisappear { store.setEditingText(false) }
     }
@@ -353,7 +340,14 @@ private struct AgentorSettingsView: View {
                 }
             }
             ForEach(AgentKind.allCases) { agent in
-                Section(agent.displayName) { integrationRow(agent) }
+                Section {
+                    integrationRow(agent)
+                } header: {
+                    HStack(spacing: 6) {
+                        AgentorLogo(agent: agent, size: 14, tint: .primary)
+                        Text(agent.displayName)
+                    }
+                }
             }
             if let error = store.integrationError { Text(error).font(.caption).foregroundStyle(.red) }
             if let message = store.focusMessage { Text(message).font(.caption).foregroundStyle(.orange) }
@@ -386,22 +380,33 @@ private struct AgentorSettingsView: View {
                 }
             }
             if let status {
-                Text(status.detail).font(.caption).foregroundStyle(.secondary)
-                if !status.paths.isEmpty {
-                    DisclosureGroup("检测路径（\(status.paths.count)）") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(status.paths, id: \.self) {
-                                Text($0).font(.caption2.monospaced()).textSelection(.enabled)
+                HStack(alignment: .top, spacing: 12) {
+                    if status.paths.isEmpty {
+                        Text("检测路径（0）")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        DisclosureGroup("检测路径（\(status.paths.count)）") {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(status.paths, id: \.self) {
+                                    Text($0).font(.caption2.monospaced()).textSelection(.enabled)
+                                }
                             }
+                            .padding(.top, 4)
                         }
-                        .padding(.top, 4)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Text(status.scannedAt.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
-                Text(status.scannedAt.formatted()).font(.caption2).foregroundStyle(.tertiary)
-                HStack {
-                    Spacer()
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(status.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if status.state == .integrated {
                         Button("移除接入", role: .destructive) { removalAgent = agent }
                     } else {

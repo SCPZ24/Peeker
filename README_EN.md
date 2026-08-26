@@ -10,7 +10,7 @@
 
 A native macOS productivity tool built entirely with Swift.
 
-> The current public release is **v2.0.1**, including the resting island, Timer compact state, unified prompts, Scheduler, and the `peeker` CLI. The screenshots below are historical v1 screenshots.
+> The current public release is **v2.0.2**, adding Agentor status aggregation for Claude Code, OpenCode, Hermes, Pi, and Codex while retaining the resting island, Timer, Scheduler, and the `peeker` CLI. The screenshots below are historical v1 screenshots.
 
 ## Preview (v1)
 

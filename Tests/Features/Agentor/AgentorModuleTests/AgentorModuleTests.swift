@@ -34,6 +34,18 @@ final class AgentorModuleTests: XCTestCase {
         XCTAssertFalse(response.ok)
     }
 
+    func testProcessStartIdentityAllowsWirePrecisionButRejectsDifferentLaunches() {
+        let actual = Date(timeIntervalSince1970: 100.123_999)
+
+        XCTAssertTrue(AgentorProcessInspector.startTimeMatches(nil, actual: actual))
+        XCTAssertTrue(AgentorProcessInspector.startTimeMatches(
+            Date(timeIntervalSince1970: 100.123), actual: actual
+        ))
+        XCTAssertFalse(AgentorProcessInspector.startTimeMatches(
+            Date(timeIntervalSince1970: 100.120), actual: actual
+        ))
+    }
+
     func testSessionProcessExitRemovesSessionWithoutCrashing() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let socketURL = directory.appendingPathComponent("agentor.sock")
@@ -49,8 +61,9 @@ final class AgentorModuleTests: XCTestCase {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sleep")
-        process.arguments = ["0.2"]
+        process.arguments = ["30"]
         try process.run()
+        defer { if process.isRunning { process.terminate() } }
         let pid = process.processIdentifier
         guard let processInfo = AgentorProcessInspector.processInfo(pid) else {
             XCTFail("Expected process metadata")
@@ -70,8 +83,9 @@ final class AgentorModuleTests: XCTestCase {
         XCTAssertEqual(response, .ack)
         XCTAssertNotNil(store.reducer.sessions[key])
 
+        process.terminate()
         while process.isRunning { try await Task.sleep(for: .milliseconds(20)) }
-        for _ in 0..<50 where store.reducer.sessions[key] != nil {
+        for _ in 0..<150 where store.reducer.sessions[key] != nil {
             try await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertNil(store.reducer.sessions[key])

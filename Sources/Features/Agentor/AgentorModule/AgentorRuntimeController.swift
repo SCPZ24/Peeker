@@ -110,7 +110,7 @@ final class AgentorRuntimeController {
         }
         guard process.scope == .session, processSources[key] == nil,
               let inspected = AgentorProcessInspector.processInfo(process.pid),
-              process.startedAt == nil || process.startedAt == inspected.startedAt else { return }
+              AgentorProcessInspector.startTimeMatches(process.startedAt, actual: inspected.startedAt) else { return }
         let source = DispatchSource.makeProcessSource(identifier: process.pid, eventMask: .exit, queue: .main)
         source.setEventHandler { [weak self] in
             self?.store.removeSession(key)

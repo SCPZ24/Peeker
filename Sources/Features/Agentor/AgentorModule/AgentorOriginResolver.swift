@@ -9,6 +9,8 @@ struct AgentorOriginIdentity: Sendable, Equatable {
 }
 
 enum AgentorProcessInspector {
+    private static let startTimeTolerance: TimeInterval = 0.002
+
     static func processInfo(_ pid: pid_t) -> (parent: pid_t, startedAt: Date)? {
         guard pid > 0 else { return nil }
         var info = proc_bsdinfo()
@@ -16,6 +18,11 @@ enum AgentorProcessInspector {
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(size)) == size else { return nil }
         let startedAt = Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000)
         return (pid_t(info.pbi_ppid), startedAt)
+    }
+
+    static func startTimeMatches(_ expected: Date?, actual: Date) -> Bool {
+        guard let expected else { return true }
+        return abs(expected.timeIntervalSince(actual)) <= startTimeTolerance
     }
 
     static func nearestRunningApplication(from pid: pid_t) -> AgentorOriginIdentity? {
@@ -35,7 +42,7 @@ enum AgentorProcessInspector {
 
     @MainActor
     static func activate(_ identity: AgentorOriginIdentity) -> Bool {
-        guard let current = processInfo(identity.pid), current.startedAt == identity.startedAt,
+        guard let current = processInfo(identity.pid), startTimeMatches(identity.startedAt, actual: current.startedAt),
               let application = NSRunningApplication(processIdentifier: identity.pid),
               !application.isTerminated else { return false }
         return application.activate()

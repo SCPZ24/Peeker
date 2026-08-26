@@ -1,4 +1,4 @@
-# Local acceptance — v2.0.0
+# Local acceptance — v2.0.2
 
 This checklist validates the repository's local v2 implementation. It does not publish a tag, GitHub Release, formal ZIP, or external Homebrew Tap update.
 
@@ -17,7 +17,7 @@ bash -n script/*.sh scripts/*.sh Tests/Shell/*.sh
 ./Tests/Shell/release_script_contract.sh
 plutil -lint Resources/Info.plist Resources/Peeker.entitlements
 ./scripts/build-app.sh release
-./scripts/verify-bundle.sh dist/Peeker.app 2.0.0
+./scripts/verify-bundle.sh dist/Peeker.app 2.0.2
 ```
 
 Validate Cask syntax from a temporary archive under `.build/verification`; do not run `package-release.sh` for local v2 acceptance.
@@ -26,12 +26,12 @@ Validate Cask syntax from a temporary archive under `.build/verification`; do no
 
 Before starting the App:
 
-- `peeker-cli --version` exits 0 with CLI `2.0.0`, protocol `1`, schema `1`.
+- `peeker-cli --version` exits 0 with CLI `2.0.2`, protocol `1`, schema `1`.
 - `peeker-cli status` exits 0 with `running:false`.
 - A feature command exits 3 with `app_not_running`.
 - These commands do not create or modify `Peeker.sqlite`.
 
-After starting the verified Bundle, `status` must report `running:true`, App `2.0.0`, protocol `1`, and a positive pid. Run non-destructive `timer config get`, `pusher config get`, and `scheduler config get` to verify routing.
+After starting the verified Bundle, `status` must report `running:true`, App `2.0.2`, protocol `1`, and a positive pid. Run non-destructive `timer config get`, `pusher config get`, and `scheduler config get` to verify routing.
 
 ## Upgrade safety
 
