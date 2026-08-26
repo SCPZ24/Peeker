@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Peeker}",
+            "name": "Debug Peeker",
+            "target": "Peeker",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Peeker"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Peeker}",
+            "name": "Release Peeker",
+            "target": "Peeker",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Peeker"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Peeker}",
+            "name": "Debug peeker-cli",
+            "target": "peeker-cli",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug peeker-cli"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Peeker}",
+            "name": "Release peeker-cli",
+            "target": "peeker-cli",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release peeker-cli"
+        }
+    ]
+}
