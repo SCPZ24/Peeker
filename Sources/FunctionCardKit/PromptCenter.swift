@@ -2,12 +2,21 @@ import Foundation
 import Observation
 import PeekerCore
 
+public enum FunctionCardPromptStyle: String, Equatable, Sendable {
+    case standard
+    case activity
+    case success
+    case failure
+    case attention
+}
+
 public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
     public let token: String
     public let sourceID: FeatureID
     public let systemImage: String
     public let moduleName: String
     public let summary: String
+    public let style: FunctionCardPromptStyle
     public let occurredAt: Date
 
     public var id: String { token }
@@ -18,6 +27,7 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
         systemImage: String,
         moduleName: String,
         summary: String,
+        style: FunctionCardPromptStyle = .standard,
         occurredAt: Date = Date()
     ) {
         self.token = token
@@ -25,6 +35,7 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
         self.systemImage = systemImage
         self.moduleName = moduleName
         self.summary = summary
+        self.style = style
         self.occurredAt = occurredAt
     }
 }

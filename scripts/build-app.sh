@@ -40,15 +40,18 @@ SWIFTPM_BUILD_FLAGS=(
 
 swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --product "$APP_NAME"
 swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --product peeker-cli
+swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --product peeker-agentor-hook
 BIN_DIR="$(swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --show-bin-path)"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$CONTENTS/Resources"
 cp "$BIN_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$BIN_DIR/peeker-cli" "$MACOS_DIR/peeker-cli"
+cp "$BIN_DIR/peeker-agentor-hook" "$MACOS_DIR/peeker-agentor-hook"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS/Info.plist"
+cp -R "$ROOT_DIR/Resources/Agentor" "$CONTENTS/Resources/Agentor"
 "$ROOT_DIR/scripts/build-icon.sh" "$CONTENTS/Resources/Peeker.icns"
-chmod +x "$MACOS_DIR/$APP_NAME" "$MACOS_DIR/peeker-cli"
+chmod +x "$MACOS_DIR/$APP_NAME" "$MACOS_DIR/peeker-cli" "$MACOS_DIR/peeker-agentor-hook"
 
 SIGN_IDENTITY="${PEEKER_SIGN_IDENTITY:--}"
 if [[ "$SIGN_IDENTITY" == "-" ]]; then

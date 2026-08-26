@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "resourceVersion": 1,
+  "placeholder": "__PEEKER_AGENTOR_HELPER__",
+  "files": {
+    "hermes/peeker-agentor/__init__.py": "21d29cac5b155792be8ca6741c50f030aa2163d0248fbe7eeabba945a457afb1",
+    "hermes/peeker-agentor/plugin.yaml": "4c62e45a81b31da56d5cf217163e3d2d850592c33d3d98aa2aadea147a7a5df7",
+    "opencode/peeker-agentor.js": "bfdb94f7fadf973362c4fe594a05d01985664bb5be8e21261f0e17cee1bb83c7",
+    "pi/peeker-agentor/index.ts": "4067ebfb247af771befed3e75a674542cf56ce737018ce8909d6256565f74f5a"
+  }
+}

@@ -53,11 +53,11 @@ final class AppPreferencesTests: XCTestCase {
         let preferences = AppPreferences(defaults: makeDefaults())
         let snapshot = preferences.upgradedCards(registrations: registrations())
 
-        XCTAssertEqual(snapshot.enabledIDs.map(\.rawValue), ["timer", "pusher", "scheduler"])
+        XCTAssertEqual(snapshot.enabledIDs.map(\.rawValue), ["timer", "pusher", "scheduler", "agentor"])
         XCTAssertEqual(snapshot.recentID.rawValue, "timer")
     }
 
-    func testV1UpgradePreservesDisabledCardsAndAppendsSchedulerOnce() {
+    func testV1UpgradePreservesDisabledCardsAndAppendsNewCardsOnce() {
         let defaults = makeDefaults()
         defaults.set(["pusher"], forKey: "enabledCardIDs")
         defaults.set(["pusher"], forKey: "cardOrder")
@@ -67,9 +67,21 @@ final class AppPreferencesTests: XCTestCase {
         let first = preferences.upgradedCards(registrations: registrations())
         let second = preferences.upgradedCards(registrations: registrations())
 
-        XCTAssertEqual(first.enabledIDs.map(\.rawValue), ["pusher", "scheduler"])
+        XCTAssertEqual(first.enabledIDs.map(\.rawValue), ["pusher", "scheduler", "agentor"])
         XCTAssertEqual(first.recentID.rawValue, "pusher")
         XCTAssertEqual(second.enabledIDs, first.enabledIDs)
+    }
+
+    func testV2UpgradeAppendsAgentorWithoutReenablingDisabledCards() {
+        let defaults = makeDefaults()
+        defaults.set(2, forKey: "cardConfigurationVersion")
+        defaults.set(["scheduler", "timer"], forKey: "enabledCardIDs")
+        defaults.set(["scheduler", "timer"], forKey: "cardOrder")
+        defaults.set("scheduler", forKey: "recentCardID")
+        let snapshot = AppPreferences(defaults: defaults).upgradedCards(registrations: registrations())
+
+        XCTAssertEqual(snapshot.enabledIDs.map(\.rawValue), ["scheduler", "timer", "agentor"])
+        XCTAssertEqual(snapshot.recentID.rawValue, "scheduler")
     }
 
     func testGenericFeaturePreferencesPreserveLegacyRawKeys() {
@@ -97,6 +109,7 @@ final class AppPreferencesTests: XCTestCase {
             registration(id: "timer", order: 0, introduced: 1),
             registration(id: "pusher", order: 1, introduced: 1),
             registration(id: "scheduler", order: 2, introduced: 2),
+            registration(id: "agentor", order: 3, introduced: 3),
         ]
     }
 

@@ -12,5 +12,7 @@ grep -q -- 'basename "$ARCHIVE"' "$ROOT_DIR/scripts/package-release.sh"
 grep -q -- 'depends_on arch: :arm64' "$ROOT_DIR/Casks/peeker.rb.template"
 grep -q -- 'peeker-cli.*target: "peeker"' "$ROOT_DIR/Casks/peeker.rb.template"
 grep -q -- 'CLI_VERSION_JSON' "$ROOT_DIR/scripts/verify-bundle.sh"
+grep -q -- 'AGENTOR_HELPER' "$ROOT_DIR/scripts/verify-bundle.sh"
+grep -q -- 'Agentor resource hash mismatch' "$ROOT_DIR/scripts/verify-bundle.sh"
 
 echo "release script contract passed"

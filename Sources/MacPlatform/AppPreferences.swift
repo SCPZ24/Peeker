@@ -73,7 +73,7 @@ public final class AppPreferences {
 
     public func upgradedCards(
         registrations: [FunctionCardRegistration],
-        targetVersion: Int = 2
+        targetVersion: Int = 3
     ) -> CardPreferenceSnapshot {
         let sorted = registrations.sorted { $0.defaultOrder < $1.defaultOrder }
         let allIDs = sorted.map(\.id)

@@ -16,6 +16,10 @@ let package = Package(
         .library(name: "PusherFeature", targets: ["PusherFeature"]),
         .library(name: "SchedulerFeature", targets: ["SchedulerFeature"]),
         .library(name: "SchedulerModule", targets: ["SchedulerModule"]),
+        .library(name: "AgentorProtocol", targets: ["AgentorProtocol"]),
+        .library(name: "AgentorFeature", targets: ["AgentorFeature"]),
+        .library(name: "AgentorModule", targets: ["AgentorModule"]),
+        .executable(name: "peeker-agentor-hook", targets: ["PeekerAgentorHook"]),
         .library(name: "PersistenceCore", targets: ["PersistenceCore"]),
         .library(name: "MacPlatform", targets: ["MacPlatform"]),
         .library(name: "FeatureRuntimeKit", targets: ["FeatureRuntimeKit"]),
@@ -29,6 +33,7 @@ let package = Package(
         .target(name: "PeekerProtocol"),
         .target(name: "PeekerIPC", dependencies: ["PeekerProtocol"]),
         .target(name: "PeekerCore"),
+        .target(name: "AgentorProtocol"),
         .target(name: "FunctionCardKit", dependencies: ["PeekerCore"]),
         .target(
             name: "TimerFeature",
@@ -44,6 +49,11 @@ let package = Package(
             name: "SchedulerFeature",
             dependencies: ["PeekerCore", "FunctionCardKit"],
             path: "Sources/Features/Scheduler/SchedulerFeature"
+        ),
+        .target(
+            name: "AgentorFeature",
+            dependencies: ["AgentorProtocol", "PeekerCore", "FunctionCardKit"],
+            path: "Sources/Features/Agentor/AgentorFeature"
         ),
         .target(
             name: "PersistenceCore",
@@ -93,6 +103,19 @@ let package = Package(
             ],
             path: "Sources/Features/Scheduler/SchedulerModule"
         ),
+        .target(
+            name: "AgentorModule",
+            dependencies: [
+                "AgentorFeature", "AgentorProtocol", "FeatureRuntimeKit", "FunctionCardKit",
+                "MacPlatform", "PeekerCore", "PersistenceCore",
+            ],
+            path: "Sources/Features/Agentor/AgentorModule"
+        ),
+        .executableTarget(
+            name: "PeekerAgentorHook",
+            dependencies: ["AgentorProtocol"],
+            path: "Sources/PeekerAgentorHook"
+        ),
         .executableTarget(
             name: "PeekerCLI",
             dependencies: ["PeekerProtocol", "PeekerIPC"]
@@ -101,10 +124,11 @@ let package = Package(
             name: "PeekerApp",
             dependencies: [
                 "PeekerCore", "PeekerProtocol", "PeekerIPC", "FunctionCardKit", "PersistenceCore", "MacPlatform",
-                "FeatureRuntimeKit", "TimerModule", "PusherModule", "SchedulerModule",
+                "FeatureRuntimeKit", "TimerModule", "PusherModule", "SchedulerModule", "AgentorModule",
             ]
         ),
         .testTarget(name: "PeekerProtocolTests", dependencies: ["PeekerProtocol"]),
+        .testTarget(name: "AgentorProtocolTests", dependencies: ["AgentorProtocol"]),
         .testTarget(name: "PeekerIPCTests", dependencies: ["PeekerIPC", "PeekerProtocol"]),
         .testTarget(name: "PeekerCoreTests", dependencies: ["PeekerCore"]),
         .testTarget(name: "FunctionCardKitTests", dependencies: ["FunctionCardKit", "PeekerCore"]),
@@ -170,6 +194,21 @@ let package = Package(
             name: "SchedulerModuleTests",
             dependencies: ["SchedulerModule", "FeatureRuntimeKit", "SchedulerFeature", "PeekerProtocol", "PersistenceCore", "MacPlatform", "PeekerCore"],
             path: "Tests/Features/Scheduler/SchedulerModuleTests"
+        ),
+        .testTarget(
+            name: "AgentorFeatureTests",
+            dependencies: ["AgentorFeature", "AgentorProtocol", "FunctionCardKit", "PeekerCore"],
+            path: "Tests/Features/Agentor/AgentorFeatureTests"
+        ),
+        .testTarget(
+            name: "AgentorModuleTests",
+            dependencies: ["AgentorModule", "AgentorFeature", "AgentorProtocol", "FeatureRuntimeKit", "MacPlatform", "PeekerCore", "PeekerProtocol"],
+            path: "Tests/Features/Agentor/AgentorModuleTests"
+        ),
+        .testTarget(
+            name: "PeekerAgentorHookTests",
+            dependencies: ["PeekerAgentorHook", "AgentorProtocol"],
+            path: "Tests/PeekerAgentorHookTests"
         ),
         .testTarget(
             name: "PeekerAppTests",

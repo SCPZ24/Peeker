@@ -8,6 +8,15 @@ final class PromptCenterTests: XCTestCase {
     private let timer = FeatureID(rawValue: "timer")
     private let pusher = FeatureID(rawValue: "pusher")
 
+    func testPromptStyleDefaultsToStandardAndSupportsSemanticStyles() {
+        XCTAssertEqual(prompt(0, source: timer).style, .standard)
+        let attention = FunctionCardPrompt(
+            token: "attention", sourceID: timer, systemImage: "questionmark",
+            moduleName: "Agentor", summary: "Waiting", style: .attention
+        )
+        XCTAssertEqual(attention.style, .attention)
+    }
+
     func testQueueIsFIFOAndRejectsThe101stItem() async {
         let center = PromptCenter()
         center.setPlaybackAllowed(false)

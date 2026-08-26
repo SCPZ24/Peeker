@@ -101,8 +101,7 @@ public struct IslandRootView: View {
 
     private func promptContent(_ prompt: FunctionCardPrompt) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: prompt.systemImage)
-                .font(.title3.weight(.semibold))
+            FunctionCardPromptGlyph(prompt: prompt)
             VStack(alignment: .leading, spacing: 2) {
                 Text(prompt.moduleName).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Text(prompt.summary).font(.subheadline).lineLimit(1).truncationMode(.tail)

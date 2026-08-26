@@ -44,7 +44,7 @@ Agentor 不提供公开 CLI，不处理普通工具权限审批，也不以 Agen
 
 | Agent | 执行状态 | 待回答发现 | 岛内写回 | 首版降级行为 |
 |---|---|---|---|---|
-| Claude Code | 支持 | `AskUserQuestion` / `PermissionRequest` | 支持 | 写回不可用时返回原生流程 |
+| Claude Code | 支持 | `PreToolUse(AskUserQuestion)` | 支持 | 写回不可用时返回原生流程 |
 | OpenCode | 支持 | `question.asked` | 支持 | 运行时缺少 reply API 时只读 |
 | Hermes | 支持 | `clarify` | 不支持 | 展示问题并跳转原生界面 |
 | Pi | 支持 | 已知问题工具的 `tool_call` | 不支持 | 展示问题并跳转原生界面 |
@@ -235,6 +235,10 @@ Agentor 展开表面最大为 `960 × 600 pt`。小屏继续使用宿主现有�
 
 ### 7.5 上游竞态
 
+同一顶层 session 可以同时保留多个独立 request；每个 request 分别维护表单、Prompt 和等待连接。可识别的 subagent request 归并到父 session，不建立独立执行行。
+
+运行时最多保留 100 个活跃 session 和 100 个未决 request。超限状态事件被丢弃；可写问题立即回落原生流程。
+
 若上游先完成回答、取消请求或返回“已处理”：
 
 1. 立即撤销表单；
@@ -291,7 +295,7 @@ Agentor 继续使用宿主全局 Prompt FIFO：
 
 | 状态 | 定义 |
 |---|---|
-| 未发现 | 标准配置目录、已知 CLI 路径和已知 App Bundle 均无安装证据 |
+| 未发现 | 标准配置目录、已知 CLI 路径和已知 App Bundle 均无安装证据；此状态禁止接入或预创建配置 |
 | 未接入 | 已发现，但 hook 缺失、路径过期、配置损坏、版本不兼容、Hermes profile 只完成部分，或 Codex 尚未信任 hook |
 | 已接入 | 当前适配器的托管文件、配置引用和必要启用门禁均完整 |
 
@@ -336,15 +340,15 @@ Agentor 继续使用宿主全局 Prompt FIFO：
 ### 11.1 Claude Code
 
 - 合并 `~/.claude/settings.json` 中的状态 command hooks。
-- 为 `AskUserQuestion` 注册专用阻塞式 `PermissionRequest` command hook。
-- 不匹配、不接管普通工具权限审批。
+- 为 `AskUserQuestion` 注册专用阻塞式 `PreToolUse` command hook，并通过官方 `updatedInput.answers` 写回。
+- 不注册 `PermissionRequest`，不匹配、不接管普通工具权限审批。
 - 问题 hook 最多等待 Peeker 590 秒；App 不可用、卡片禁用、协议错误或超时后返回原生流程。
 
 ### 11.2 OpenCode
 
-- 按 `opencode.jsonc → opencode.json → config.json` 确定实际生效的全局配置。
-- 修改 JSONC 时必须保留注释和无关格式。
-- 注册 Peeker 托管 plugin，监听 session、tool 和 question 事件。
+- 按 `opencode.jsonc → opencode.json → config.json` 确定实际配置证据，但不修改这些配置文件。
+- 将单文件 Peeker 托管 plugin 安装到官方全局 `plugins/` 自动发现目录；安装和移除保证 JSON/JSONC byte-for-byte 不变。
+- plugin 监听 session、tool 和 question 事件。
 - plugin 在后台等待 Peeker 回答，收到答案后调用公开 `question.reply`。
 - 运行时缺少 reply API 时自动降级只读，不伪造私有接口。
 
@@ -368,7 +372,7 @@ Agentor 继续使用宿主全局 Prompt FIFO：
 - 启用 `[features].hooks`，检查 `[hooks.state]` 的 trusted hash。
 - 接入后提示用户在 Codex 执行 `/hooks` 完成信任审核，并在设置页刷新。
 - 执行状态使用官方 hooks。
-- `request_user_input` 使用有界 JSONL 增量监视，只读展示。
+- 有界 JSONL 增量监视只白名单解析 `request_user_input`、对应完成事件和 `turn_aborted` 等终止事件；问题只读展示，失败/取消用于及时清理。
 - 不修改用户的 `notify` 配置。
 
 ## 12. 内部架构
@@ -494,7 +498,7 @@ App Bundle 包含 `peeker-agentor-hook`：
 - 移除只清理 Peeker 拥有内容；
 - 用户修改托管文件后拒绝自动删除。
 
-另需覆盖 OpenCode JSONC、Hermes 多 profile 和 Codex trust 状态。
+另需覆盖 OpenCode 自动发现安装且 JSON/JSONC byte-for-byte 不变、Hermes 多 profile 和 Codex trust 状态。
 
 ### 16.4 UI 与动画
 
