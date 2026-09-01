@@ -39,6 +39,26 @@
             "target": "peeker-cli",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release peeker-cli"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Peeker}",
+            "name": "Debug peeker-agentor-hook",
+            "target": "peeker-agentor-hook",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug peeker-agentor-hook"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Peeker}",
+            "name": "Release peeker-agentor-hook",
+            "target": "peeker-agentor-hook",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release peeker-agentor-hook"
         }
     ]
 }

@@ -1,10 +1,10 @@
-# Peeker v2 增量产品需求文档
+# Peeker v2.1 增量产品需求文档
 
-> 文档状态：已确认，可用于 v2 设计、开发和验收
+> 文档状态：已确认，可用于 v2.1.0 设计、开发和验收
 >
-> 目标版本：v2
+> 目标版本：v2.1.0
 >
-> 当前代码状态：仓库已实现 v2.0.0；本文继续作为行为与验收契约
+> 当前代码状态：仓库已实现 v2.0.2；本文在现行行为上定义 v2.1.0 增量契约
 >
 > 最低系统：macOS 26
 >
@@ -16,29 +16,35 @@
 2. `docs/functions/` 下的 v2 现行模块文档；
 3. `docs/v1/PRD.md`。
 
-Timer、Pusher、Scheduler 的完整行为分别见 [timer.md](../functions/timer.md)、[pusher.md](../functions/pusher.md) 和 [scheduler.md](../functions/scheduler.md)。
+五张内置卡的完整行为见 [Timer](../functions/timer.md)、[Pusher](../functions/pusher.md)、[Scheduler](../functions/scheduler.md)、[Agentor](../functions/agentor.md) 和 [Targetor](../functions/targetor.md)。Agentor 自 v2.0.2 已实现；Timer 临时任务与 Targetor 是 v2.1.0 增量。
 
 ## 1. 摘要
 
-v2 将 Peeker 从“始终显示摘要的双功能卡岛”扩展为可静息的本地效率入口：
+v2 将 Peeker 从“始终显示摘要的双功能卡岛”扩展为可静息的本地效率入口。v2.1.0 在 v2.0.2 基础上形成五张内置功能卡：
 
 - 无需持续展示信息时，岛完全隐藏黑色表面，只保留顶部透明热区；
-- 功能卡可按自身实时状态选择是否提供收敛态；
-- 功能卡可向统一、静音、FIFO 的岛内提示队列发布消息；
-- 新增本地周日历 Scheduler，支持 CRUD、常用重复规则、ICS 导入和日程提醒；
-- 新增面向用户与 Coding Agent 的 `peeker` CLI，由已运行 App 统一执行业务操作。
+- Timer 与 Agentor 可按实时状态提供 Compact，其他卡平时 Resting；
+- 功能卡通过统一、静音、FIFO 的岛内提示队列发布消息；
+- Scheduler 提供本地周日历、重复规则、ICS 导入和日程提醒；
+- Agentor 观察本机五种 Coding Agent 的顶层执行状态；
+- Timer 增加默认关闭、可跨业务日累计的临时计时任务；
+- Targetor 用日、周、月周期打卡管理长期主线目标；
+- `peeker` CLI 由已运行 App 统一执行业务操作，并提供完整分级帮助。
 
-v2 仍是本地优先、无账号、无遥测的原生 macOS App。CLI 不是第二套业务实现，也不拥有数据库。
+Peeker 仍是本地优先、无账号、无遥测的原生 macOS App。CLI 不是第二套业务实现，也不拥有数据库。
 
 ## 2. 目标与非目标
 
 ### 2.1 目标
 
 1. 无活跃信息时不持续占用屏幕顶部视觉空间，同时保留可发现的悬停入口。
-2. 让 Timer、Pusher、Scheduler 通过同一提示机制提供及时但不使用系统通知的反馈。
-3. 提供可由 Coding Agent 稳定解析和调用的本地 CLI。
+2. 让内置功能卡通过同一提示机制提供及时但不使用系统通知的反馈。
+3. 提供可由 Coding Agent 稳定解析和调用、具有完整分级帮助的本地 CLI。
 4. 提供足以替代轻量周日历的本地 Scheduler，并允许导入常见 ICS 数据。
-5. 无损升级 v1 Timer、Pusher 数据、活动会话和用户偏好。
+5. 观察本机 Agent 顶层执行与待回答状态，不依赖终端窗口数量。
+6. 在不破坏每日 routine 语义的前提下，支持一次性临时计时任务。
+7. 用可比较的周期完成度记录长期目标推进。
+8. 无损升级既有业务数据、活动会话、卡片顺序和用户偏好。
 
 ### 2.2 非目标
 
@@ -48,6 +54,9 @@ v2 仍是本地优先、无账号、无遥测的原生 macOS App。CLI 不是第
 - 邮件邀请、参与者响应、附件或会议服务集成；
 - 系统通知中心通知或任何 v2 提示声音；
 - Scheduler 拖拽移动、拖边缩放、复杂 RRULE 编辑器或每项独立提醒；
+- Targetor 提醒、Compact、GUI 撤销、GUI 非拖拽打卡、CLI 排序或归档恢复；
+- Timer 临时任务排序、历史浏览、超过 `23:59:59` 的目标或并行会话；
+- 运行时联网下载 Lucide、用户 SVG 或任意外部图标路径；
 - CLI 直接访问 SQLite、自动启动 App、后台守护进程或 XPC Service；
 - 第三方功能卡 SDK 或插件市场。
 
@@ -59,8 +68,11 @@ v2 仍是本地优先、无账号、无遥测的原生 macOS App。CLI 不是第
 | 收敛能力 | 每张卡必须提供 | 变为可选、实时能力 |
 | Timer 收敛态 | 始终可见最近任务摘要 | 仅已启用且存在运行任务时可见，只显示运行任务 |
 | Pusher 收敛态 | 显示三列统计 | 删除；Pusher 平时静息 |
+| Agent 状态 | 无 | v2.0.2 增加 Agentor；有活跃会话时可提供 Compact |
 | 主动反馈 | Timer 达标动效和声音 | 统一静音提示队列；删除 Timer 声音 |
-| 功能卡 | Timer、Pusher | 新增 Scheduler |
+| 功能卡 | Timer、Pusher | v2.1.0 为 Timer、Pusher、Scheduler、Agentor、Targetor |
+| Timer 任务 | 只有每日模板 | v2.1.0 增加默认关闭的临时任务能力 |
+| 长期目标 | 无 | v2.1.0 增加 Targetor 周期打卡 |
 | 外部操作 | 无 CLI | 新增只调用已运行 App 的 `peeker` CLI |
 | 进程边界 | 单 App 进程 | 一个长期 App 数据进程；允许短生命周期 CLI 客户端，但 App 仍是唯一数据库写入者 |
 
@@ -75,9 +87,11 @@ flowchart TB
     Host["Peeker App Host\n唯一数据库写入者"]
     Island["岛状态与提示协调器"]
     Registry["Function Card Registry"]
-    Timer["Timer"]
+    Timer["Timer\n每日 + 临时计时"]
     Pusher["Pusher"]
     Scheduler["Scheduler"]
+    Agentor["Agentor\n内存状态 + 私有 UDS"]
+    Targetor["Targetor\n周期打卡"]
     DB[("Peeker.sqlite + Preferences")]
 
     CLI --> IPC --> Host
@@ -86,9 +100,12 @@ flowchart TB
     Registry --> Timer
     Registry --> Pusher
     Registry --> Scheduler
+    Registry --> Agentor
+    Registry --> Targetor
     Timer --> DB
     Pusher --> DB
     Scheduler --> DB
+    Targetor --> DB
 ```
 
 CLI 请求必须进入与 UI 相同的 Store 或应用服务。不得为 CLI 复制跨日恢复、重复规则、事务、提示或校验逻辑。
@@ -141,7 +158,7 @@ stateDiagram-v2
 - 从 Compact 悬停展开时，打开 Compact 的来源卡，并更新该卡的最近打开时间。
 - 展开结束后重新计算，而不是无条件恢复展开前的 Compact。
 
-v2 内置卡中只有 Timer 在运行任务存在时提供 Compact。设计必须保持通用，不得在宿主中硬编码 Timer 特权。
+v2.1.0 内置卡中，Timer 在每日或临时任务运行时、Agentor 在存在活跃顶层会话时提供 Compact；Pusher、Scheduler、Targetor 不提供。设计必须保持通用，不得在宿主中硬编码 Timer 或 Agentor 特权。
 
 ### 5.4 Expanded
 
@@ -166,11 +183,13 @@ v1 的悬停展开、点击锁定、`Esc`、外部点击、Popover、拖拽、�
 v2 的宿主接口必须保持功能卡无关：
 
 - Function Card 注册可选的 Compact 内容，以及可观察的“当前是否需要 Compact”状态；没有提供者等同永不合格。
-- 注册仍提供 Expanded、Settings、身份、排序和尺寸，不要求空的占位 Compact view。
-- 宿主向模块提供 Prompt 发布与按稳定 token 撤销能力；提示项至少包含 token、来源 Feature ID、图标、模块名、摘要和发生时间。
-- Scheduler 用 occurrence 身份派生稳定 token，以支持删除/改期撤销；Pusher/Timer 每次成功事件可生成新 token。
+- 注册提供 Expanded、Settings、身份、排序、受信任图标描述符和宿主可观察的展开尺寸状态，不要求空 Compact view。
+- 图标描述符支持现有 SF Symbol 与模块 Bundle manifest 中的 SVG；不得接受路径、URL 或任意 SVG 内容。
+- Timer 可按临时任务开关把展开高度在 `328.571pt` 与 `371.429pt` 间切换；通用宿主观察尺寸状态，不读取 Timer 偏好。
+- 宿主向模块提供 Prompt 发布与按稳定 token 撤销能力；提示项至少包含 token、来源 Feature ID、受信任图标、模块名、摘要和发生时间。
+- Scheduler 用 occurrence 身份派生稳定 token；Agentor 等待问题使用 request ID；其他成功事件可生成新 token。
 - CardRegistry 启用状态是主动展示的统一门禁。禁用时宿主清除该来源当前/待播 Prompt，并排除 Compact，但不得销毁模块 Store。
-- Compact 解析、Prompt 排队、1.5 秒延迟和鼠标进入行为只在通用宿主实现；不得在 Timer、Pusher、Scheduler 视图中各自复制状态机。
+- Compact 解析、Prompt 排队、1.5 秒延迟、动态图标渲染和鼠标进入行为只在通用宿主实现；不得在各功能卡视图复制宿主状态机。
 
 ## 6. 全局提示队列
 
@@ -196,11 +215,13 @@ v2 的宿主接口必须保持功能卡无关：
 
 | 模块 | 触发 | 不触发 |
 | --- | --- | --- |
-| Timer | 在线、自然计时达到目标且事务已提交 | 编辑目标造成完成；启动/唤醒恢复的过期完成；开始、暂停、模板 CRUD |
+| Timer | 每日或临时任务在线自然达到目标且事务已提交 | 编辑目标造成完成；启动/唤醒恢复的过期完成；开始、暂停、CRUD、边界归档 |
 | Pusher | 成功新建、删除、跨状态移动 | 标题/急迫度/每日属性编辑；同列排序；跨日自动归档或重建 |
 | Scheduler | 每个非全天 occurrence 到达全局提前提醒时刻 | 全天日程；过期提醒；CRUD 本身 |
+| Agentor | 执行开始、正常结束、失败/取消、等待回答 | 状态心跳、失联清理、已撤销问题 |
+| Targetor | UI 或 CLI 成功打卡 | 撤销、周期恢复、CRUD、设置排序 |
 
-Pusher 的 UI 和 CLI 操作使用相同触发规则。UI 在展开态完成操作时，提示先入队，收起 `1.5` 秒后再播放。
+Pusher 与 Targetor 的 UI/CLI 操作使用相同触发规则。UI 在展开态完成操作时，提示先入队，收起 `1.5` 秒后再播放。Agentor 的等待提示可按 request ID 撤销。
 
 Scheduler 日程已入队但未显示时：
 
@@ -227,11 +248,13 @@ peeker --help
 peeker --version
 peeker status
 peeker timer ...
+peeker timer temporary ...
 peeker pusher ...
 peeker scheduler ...
+peeker targetor ...
 ```
 
-`--help` 输出用法文本。除此之外，正常结果和错误只输出 JSON，不提供 text 模式或 TTY 自动切换。
+`--help` 输出用法文本。根命令、功能级、命令组和叶命令都必须支持 `-h`/`--help`，且帮助不要求 App 运行；每页指向可继续发现的下一级或上一级帮助。除此之外，正常结果和错误只输出 JSON，不提供 text 模式或 TTY 自动切换。
 
 ### 7.3 JSON envelope
 
@@ -281,7 +304,7 @@ IPC 在提交后、响应前断开时，不得猜测成功或自动重试非幂�
 `peeker --version` 不要求 App 运行，退出 `0` 并返回：
 
 ```json
-{"schemaVersion":1,"ok":true,"data":{"cliVersion":"2.0.0","protocolVersion":1}}
+{"schemaVersion":1,"ok":true,"data":{"cliVersion":"2.1.0","protocolVersion":1}}
 ```
 
 `peeker status` 在 App 未运行时：
@@ -295,7 +318,7 @@ App 运行时，`data` 至少包含：
 ```json
 {
   "running": true,
-  "appVersion": "2.0.0",
+  "appVersion": "2.1.0",
   "protocolVersion": 1,
   "pid": 12345
 }
@@ -304,7 +327,7 @@ App 运行时，`data` 至少包含：
 ### 7.6 选择器与事务
 
 - UUID 是稳定主键；`list`/`get` 必须返回后续命令所需 ID。
-- Timer/Pusher 允许名称快捷选择，但仅接受去除首尾空白后的精确唯一匹配。
+- Timer/Pusher/Targetor 允许名称或标题快捷选择，但仅接受去除首尾空白后的大小写敏感精确唯一匹配。
 - 没有匹配返回 `not_found`；多个匹配返回 `ambiguous_selector` 及候选 ID。
 - 变更命令只在事务提交后返回成功，并返回提交后的对象状态。
 - 删除立即执行，不交互确认，也不要求 `--yes`。
@@ -312,11 +335,13 @@ App 运行时，`data` 至少包含：
 - `config set --enabled false` 必须保留“至少启用一张卡”的全局约束。
 - 禁用卡仍接受业务 CLI 操作，但不产生 Compact 或 Prompt。
 
-模块命令及字段见各功能文档。
+模块命令及字段见各功能文档。Agentor 不注册公开 CLI；`peeker agentor` 必须保持未知功能错误。Timer 每日模板命令与 `timer temporary` 使用独立选择器命名空间。
 
-## 8. Scheduler 概要
+## 8. 功能卡增量概要
 
-Scheduler 是 v2 新增的单一本地日历功能卡：
+### 8.1 Scheduler
+
+Scheduler 是 v2.0.0 新增的单一本地日历功能卡：
 
 - 周一至周日的全天区和 24 小时时间网格；
 - 单次、全天、跨日和常用重复日程；
@@ -325,29 +350,70 @@ Scheduler 是 v2 新增的单一本地日历功能卡：
 - 全局 `off` 或提前 `1–60` 分钟的静音岛内提醒，默认 `10` 分钟；
 - UI 与 CLI 共用领域、事务和提醒调度。
 
-Scheduler 不使用 Peeker 业务日或每日快照。完整实现设计见 [Scheduler 功能文档](../functions/scheduler.md)。
+Scheduler 不使用 Peeker 业务日或每日快照。完整设计见 [Scheduler 功能文档](../functions/scheduler.md)。
+
+### 8.2 Agentor
+
+Agentor 是 v2.0.2 已实现的第 4 张卡：
+
+- 支持 Pi、OpenCode、Hermes、Codex、Claude Code 顶层执行状态；
+- 活跃会话至少为 1 时可提供 Compact；
+- Claude Code/OpenCode 在可靠上游接口可用时支持岛内回答，其他 Agent 只读提醒；
+- 状态、问题和答案只保存在内存，不注册 GRDB migration；
+- 使用私有 helper/UDS，不提供公开 CLI。
+
+完整设计见 [Agentor 功能文档](../functions/agentor.md)。
+
+### 8.3 Timer 临时任务
+
+v2.1.0 在每日模板之外增加临时任务：
+
+- 新建能力默认关闭；关闭后已有临时任务仍可完整管理；
+- 未开启随刷新消失的未完成任务携带同一 ID 与累计进度跨业务日；
+- 开启随刷新消失的任务在下一边界归档，运行中只结算到边界；
+- 每日与临时任务共享唯一活动会话、完成 Prompt 和统计口径；
+- CLI 使用 `peeker timer temporary ...` 独立命令组；
+- 开启新建能力时 Timer 表面动态变为 `800×371.429pt`，右侧上下等分为新增与统计。
+
+完整设计见 [Timer 功能文档](../functions/timer.md)。
+
+### 8.4 Targetor
+
+Targetor 是 v2.1.0 新增的第 5 张卡：
+
+- 用日、周、月周期记录长期目标 `count/max`；
+- GUI 通过把推进卡拖到右侧打卡；CLI 支持打卡与当前周期事件撤销；
+- 默认汇总图显示前 8 个完整周加当前周，并对混合周期目标等权平均；
+- 软归档目标保留历史；
+- 不提供 Compact 或定时提醒；成功打卡发布统一 Prompt；
+- 离线内置 Lucide v1.27.0 完整图标目录。
+
+完整设计见 [Targetor 功能文档](../functions/targetor.md)。
 
 ## 9. 默认配置与升级
 
 ### 9.1 新安装
 
-- 默认启用顺序：Timer、Pusher、Scheduler。
-- Scheduler 提醒默认提前 `10` 分钟。
-- Scheduler 默认事件颜色为系统蓝。
+- 默认启用顺序：Timer、Pusher、Scheduler、Agentor、Targetor。
+- Timer 临时任务允许开关默认关闭，不创建示例临时任务。
+- Scheduler 提醒默认提前 `10` 分钟，默认事件颜色为系统蓝。
+- Targetor 刷新时刻默认 `00:00`，不创建示例推进项。
+- Agentor 默认启用，但不自动植入任何 Agent hook/plugin。
 - 其他 v1 默认值保持不变。
 
-### 9.2 从 v1 升级
+### 9.2 升级
 
-- 无损保留 Timer/Pusher SQLite 数据、快照、活动 Timer 会话和模块偏好。
-- 保留用户已有卡片启用状态、相对排序和最近选择。
-- 自动启用 Scheduler，并追加到已有启用顺序末尾。
-- 不得重新启用用户此前主动禁用的 Timer 或 Pusher。
-- 若最近选择卡无效，按升级后的已启用顺序回退。
-- 活动 Timer 继续按原开始时间计时；v2 达标后只产生静音 Prompt。
-- 只追加 Scheduler schema、CLI/提示所需宿主状态迁移，不执行破坏性迁移。
+- 无损保留 Timer/Pusher/Scheduler SQLite 数据、快照、活动 Timer 会话、Agentor 接入文件和模块偏好。
+- 保留用户已有卡片启用状态、相对排序、最近选择和最近打开时间。
+- 按 introduced configuration version 追加新卡：Scheduler、Agentor、Targetor；v2.0.x 到 v2.1.0 时启用 Targetor 并追加在 Agentor 后。
+- 不得重新启用用户此前主动禁用的旧卡。
+- 卡配置版本提升到 `4`；若最近选择卡无效，按升级后的启用顺序回退。
+- Timer 临时任务允许开关对所有既有用户初始化为 false；活动每日 Timer 继续按原开始时间计时。
+- 只追加 Timer temporary、Targetor、宿主动态图标/尺寸所需 schema 与偏好，不执行破坏性迁移。
+- Targetor 不自动创建目标；Agentor 不因升级自动植入 hook。
 - Prompt 队列不迁移。
 
-CLI 协议与 JSON schema 在 v2 从版本 `1` 起步。破坏性变更必须提升对应版本并返回明确的 `protocol_mismatch`，不得静默兼容。
+CLI protocol version 与 JSON schema version 继续为 `1`；本轮新增命令和字段保持向后兼容。后续破坏性变更必须提升对应版本并返回明确 `protocol_mismatch`。
 
 ## 10. 错误、安全、隐私与性能
 
@@ -356,63 +422,85 @@ CLI 协议与 JSON schema 在 v2 从版本 `1` 起步。破坏性变更必须提
 - CLI 不上传业务数据；ICS 文件只在本地解析和保存。
 - Scheduler 来源刷新失败必须保留上次成功数据和来源元数据。
 - 无限重复日程只在请求窗口内惰性展开，不预生成无限实例。
-- Resting 不得通过高频轮询维持；Prompt 和 Scheduler 提醒使用统一时间调度。
+- Timer 临时任务边界必须与每日快照、会话拆分和归档原子提交，不能产生不可见运行任务。
+- Targetor 打卡上限在事务内重新校验；软归档不得级联删除历史周期或事件。
+- Lucide 仅从离线、版本化、哈希校验的 Bundle manifest 读取，不接受网络、任意路径或用户 SVG。
+- 全量 Lucide 选择器使用虚拟化网格和本地索引，不能一次实例化全部 SVG View。
+- Resting 不得通过高频轮询维持；Prompt、Scheduler 提醒和各模块边界使用统一时间调度。
 - 禁止为了 CLI 在 App 外复制 GRDB migration 或业务恢复代码。
-- v2 仍无账号、遥测、业务数据上传和系统通知。
+- v2.1 仍无账号、遥测、业务数据上传和系统通知。
 
 ## 11. 验收标准
 
 ### 11.1 文档与升级
 
-- [ ] v2 PRD、三个模块文档不存在相互冲突或未决占位符。
-- [ ] v1 数据和偏好升级后无损；Scheduler 被启用并追加，不改变既有卡相对顺序。
-- [ ] v1 活动 Timer 升级后继续计时，达标时没有声音。
+- [ ] PRD、Architecture、concept 和五张功能卡文档不存在冲突、TODO 或未决占位符。
+- [ ] v2.0.2 现状与 v2.1.0 目标明确区分；Agentor 被记录为已实现第 4 张卡。
+- [ ] 新安装顺序为 Timer、Pusher、Scheduler、Agentor、Targetor。
+- [ ] v2.0.x 升级保留旧卡顺序、最近选择和禁用状态，默认启用的 Targetor 只追加一次。
+- [ ] Timer 临时任务允许开关对新安装和升级均为 false，既有数据无损。
+- [ ] migration 失败不删除或重建数据库；Prompt 队列不迁移。
 
-### 11.2 岛状态
+### 11.2 岛与宿主
 
-- [ ] 无已启用卡需要收敛态时不绘制黑框；透明热区仍可展开最近卡。
+- [ ] 无已启用卡需要 Compact 时不绘制黑框；透明热区仍可展开最近卡。
 - [ ] 无刘海屏只有顶部中央 `220×8pt` 热区截获 hover；其余菜单栏可交互。
-- [ ] Timer 运行时出现 Compact，暂停、删除、达标或不再运行后重新解析为其他 Compact 或 Resting。
-- [ ] Pusher 和 Scheduler 不提供 Compact。
-- [ ] 多卡需要 Compact 时按最近打开时间选择，未记录时按卡片顺序选择。
-- [ ] 展开、锁定、Popover、拖拽和文本输入继续遵守 v1 收起阻止规则。
+- [ ] Timer 运行时、Agentor 有活跃会话时可提供 Compact，并按最近打开时间/启用顺序竞争。
+- [ ] Pusher、Scheduler、Targetor 不提供 Compact。
+- [ ] Timer 临时任务开关变化时展开高度在 `328.571pt` 与 `371.429pt` 间平滑重算，宿主无 Timer 特判。
+- [ ] SF Symbol 与受信任 Bundle SVG 可在标签、设置和 Prompt 中统一渲染。
+- [ ] 展开、锁定、Popover、拖拽和文本输入继续遵守收起 blocker 规则。
 
-### 11.3 提示
+### 11.3 Prompt
 
 - [ ] Prompt 使用 `420×72pt` 上限、单行摘要和静音显示。
 - [ ] 展开期间提示排队，并在展开结束 `1.5` 秒后开始；每条显示 `6` 秒。
 - [ ] 鼠标进入 Prompt 会消费当前项并打开来源卡。
 - [ ] FIFO 次序稳定；第 101 条新提示在总数已达 100 时被丢弃且不驱逐旧项。
 - [ ] App 未运行或 Mac 睡眠期间的 Timer 完成、Scheduler 提醒不补播。
-- [ ] 禁用来源卡会清除其待播提示，并禁止后续主动展示。
-- [ ] 数据库失败不产生 Prompt。
+- [ ] Targetor UI/CLI 成功打卡提示，撤销与周期恢复不提示。
+- [ ] 禁用来源卡清除其待播提示并禁止后续主动展示；数据库失败不提示。
 
 ### 11.4 CLI
 
 - [ ] Cask 可同时安装 `Peeker.app` 和命令名 `peeker`，物理 CLI 文件不与 `Peeker` 大小写冲突。
 - [ ] `peeker status` 在 App 未运行时退出 `0` 并返回合法 JSON `running:false`。
-- [ ] 其他命令在 App 未运行时不启动 App、不打开数据库，并返回 `app_not_running`。
+- [ ] 其他业务命令在 App 未运行时不启动 App、不打开数据库，并返回 `app_not_running`。
+- [ ] 根、功能、命令组和叶命令帮助不要求 App 运行，并形成可发现层级。
+- [ ] `timer temporary` 与每日模板选择器、返回类型隔离；`targetor` 全部命令与错误码符合模块文档。
 - [ ] 正常结果、错误、退出码、名称歧义和协议不兼容符合公共契约。
-- [ ] UI 与 CLI 的同类操作产生相同数据、恢复、事务和提示结果。
+- [ ] UI 与 CLI 同类操作产生相同数据、恢复、事务和提示结果。
 - [ ] 提交后响应丢失返回 `outcome_unknown`，客户端不自动重放变更。
+- [ ] Agentor 不出现在公开 CLI 功能命令中；protocol/JSON schema 保持版本 `1`。
 
 ### 11.5 Timer 与 Pusher
 
-- [ ] Timer v1 计时、跨日、快照和单活动任务验收继续通过。
-- [ ] Timer 仅自然在线达标产生 Prompt，且不播放 v1 提示音。
-- [ ] Pusher 不再显示收敛摘要。
-- [ ] Pusher 新建、删除和跨状态移动在提交后提示；字段编辑与同列排序不提示。
-- [ ] 三个模块 CLI 命令、校验和返回字段符合各自文档。
+- [ ] Timer 既有计时、每日跨日、快照和单活动任务验收继续通过。
+- [ ] 每日与临时任务共享唯一活动会话和自然完成 Prompt，且不播放 v1 提示音。
+- [ ] 非 expire 临时任务跨日携带；expire 任务在下一边界按状态正确归档。
+- [ ] 边界快照先包含活动临时任务，再执行归档或携带；历史冻结不回写。
+- [ ] 关闭临时任务能力时禁止新建，但已有临时任务仍可完整管理。
+- [ ] Pusher 无 Compact；新建、删除和跨状态移动提交后提示，字段编辑与同列排序不提示。
 
-### 11.6 Scheduler
+### 11.6 Scheduler 与 Agentor
 
-- [ ] 周视图、CRUD、全天/定时/跨日、重叠布局和 Popover 符合功能文档。
-- [ ] daily/weekly/monthly/yearly、until/count/never、单次例外、今后拆分和全部编辑结果确定。
-- [ ] ICS 首次导入、同来源刷新、部分无效、文件级失败和来源删除不会静默丢失非来源数据。
-- [ ] 本地和 ICS 非全天 occurrence 按全局提前量提醒；全天和过期 occurrence 不提醒。
-- [ ] 删除或改期能撤销旧调度和待播 Prompt。
-- [ ] 无限重复查询不会预生成无界数据。
+- [ ] Scheduler 周视图、CRUD、重复规则、ICS 来源和提醒继续符合功能文档。
+- [ ] 无限重复查询不会预生成无界数据；删除或改期能撤销旧调度和待播 Prompt。
+- [ ] Agentor 五种 Agent 的执行状态、Compact、问题表单、私有 IPC 和接入管理继续符合功能文档。
+- [ ] Agentor 不注册 GRDB migration，升级不自动植入 hook/plugin。
+
+### 11.7 Targetor
+
+- [ ] 日/周/月周期覆盖任意周刷新日、`0=月末`、短月、DST、时区变化和多周期离线恢复。
+- [ ] 周期规则编辑结算清零；普通字段/max 编辑不清零；降低 max 不删除事件。
+- [ ] UI 拖拽与 CLI checkin 在事务中校验上限，取消或冲突不写库。
+- [ ] CLI uncheck 只物理删除当前周期指定事件，并回退 count、状态和日历。
+- [ ] 软归档后当前列表移除，归档前历史和汇总保持。
+- [ ] 9 列窗口、混合周期等权平均、五级色阶和单项目日历符合功能文档。
+- [ ] 三种阶段预览、1 秒反馈和 Reduce Motion 行为可验收。
+- [ ] Lucide v1.27.0 可离线搜索和渲染；未知名称、任意路径和用户 SVG 被拒绝。
+- [ ] manifest、哈希、MIT/ISC 许可与 Bundle 验证通过。
 
 ## 12. 后续方向
 
-v2 不承诺 CalDAV、EventKit、系统通知、复杂 iCalendar 全兼容或第三方扩展。若后续增加这些能力，应另行设计权限、来源冲突、协议兼容和迁移，不得把 v2 的一次性本地 ICS 来源机制隐式升级为云同步。
+v2.1 不承诺 CalDAV、EventKit、系统通知、复杂 iCalendar 全兼容或第三方扩展。若后续增加这些能力，应另行设计权限、来源冲突、协议兼容和迁移，不得把一次性本地 ICS 来源机制隐式升级为云同步。Targetor 的 GUI 撤销、提醒、归档恢复和 Lucide 在线更新也必须另行设计，不从本轮契约推导。

@@ -446,8 +446,9 @@ App Bundle 包含 `peeker-agentor-hook`：
 - Agentor：`defaultOrder = 3`。
 - Agentor：`introducedConfigurationVersion = 3`。
 - 默认启用。
-- 新安装顺序：Timer、Pusher、Scheduler、Agentor。
-- 既有用户升级时保留原卡相对顺序，将 Agentor 追加到末尾。
+- Agentor 在 v2.0.2 引入时的新安装顺序为 Timer、Pusher、Scheduler、Agentor。
+- v2.1.0 新安装顺序为 Timer、Pusher、Scheduler、Agentor、Targetor；Targetor 的加入不改变 Agentor 的 `defaultOrder = 3`。
+- 既有用户首次获得 Agentor 时保留原卡相对顺序，将 Agentor 追加到当时末尾；后续 v2.1.0 再按总 PRD 追加 Targetor。
 - 不重新启用用户此前禁用的卡。
 - 升级绝不自动植入 Agent hook。
 - Compact 选择算法、Prompt FIFO 容量、公共 CLI schema/version 保持不变。
