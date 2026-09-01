@@ -6,6 +6,7 @@ public struct TargetorFeedback: Equatable, Sendable {
     public let targetID: UUID
     public let state: TargetorCheckinState
     public let token: UUID
+    let startedAt: Date
 }
 
 @MainActor
@@ -184,6 +185,18 @@ public final class TargetorStore {
     }
 
     @discardableResult
+    func checkinFromUI(targetID: UUID, expectedPeriodID: UUID) async -> Bool {
+        do {
+            _ = try await checkin(targetID: targetID, expectedPeriodID: expectedPeriodID)
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = "无法打卡：\(checkinErrorDescription(error))"
+            return false
+        }
+    }
+
+    @discardableResult
     public func uncheck(eventID: UUID) async throws -> TargetorTargetState {
         try await withMutation {
             try await recoverAndReload()
@@ -240,9 +253,12 @@ public final class TargetorStore {
             let dates = TargetorCalendarCalculator.nineWeekDates(
                 containing: now, calendar: resolver.calendar
             )
-            guard let first = dates.first, let last = dates.last else { return [] }
-            let from = resolver.dayInterval(containing: first, refreshTime: refreshTime).start
-            let to = resolver.dayInterval(containing: last, refreshTime: refreshTime).end
+            let intervals = dates.map {
+                resolver.dayInterval(startingOnLocalDate: $0, refreshTime: refreshTime)
+            }
+            guard let from = intervals.map(\.start).min(),
+                  let to = intervals.map(\.end).max()
+            else { return [] }
             let allTargets = try await repository.snapshot(scope: .all).targets.map(\.target)
             var periods: [TargetorPeriod] = []
             for target in allTargets {
@@ -256,6 +272,34 @@ public final class TargetorStore {
             return TargetorCalendarCalculator.aggregate(
                 dates: dates, now: now, refreshTime: refreshTime,
                 targets: allTargets, periods: periods, resolver: resolver
+            )
+        }
+    }
+
+    func targetCalendar(targetID: UUID) async throws -> TargetorTargetCalendarSnapshot {
+        try await withMutation {
+            try await recoverAndReload()
+            guard let state = targets.first(where: { $0.id == targetID }) else {
+                throw TargetorError.targetNotFound
+            }
+            let now = clock.now()
+            let window = TargetorCalendarCalculator.targetWindow(
+                frequency: state.target.periodRule.frequency,
+                containing: now,
+                offset: 0,
+                refreshTime: refreshTime,
+                resolver: resolver
+            )
+            let history = try await repository.history(
+                targetID: targetID,
+                fromMilliseconds: window.queryInterval.start.millisecondsSince1970,
+                toMilliseconds: window.queryInterval.end.millisecondsSince1970
+            )
+            return TargetorCalendarCalculator.targetSnapshot(
+                target: state.target,
+                periods: history.periods,
+                now: now,
+                window: window
             )
         }
     }
@@ -299,16 +343,32 @@ public final class TargetorStore {
         }
     }
 
+    private func checkinErrorDescription(_ error: Error) -> String {
+        guard let targetorError = error as? TargetorError else { return error.localizedDescription }
+        switch targetorError {
+        case .cycleComplete:
+            return "本周期已完成"
+        case .eventNotCurrent:
+            return "目标周期已更新，请重新拖拽"
+        case .targetNotFound, .targetArchived:
+            return "目标已不可用"
+        case .invalidTitle, .invalidIcon, .invalidPeriod, .invalidMaxCount,
+             .ambiguousSelector, .eventNotFound, .invalidHistoryRange, .noActualChange:
+            return "请求无效"
+        }
+    }
+
     private func publishFeedback(_ result: TargetorCheckinResult) {
         feedbackTask?.cancel()
         let value = TargetorFeedback(
             targetID: result.target.id,
             state: result.target.currentPeriod?.state ?? .notStarted,
-            token: UUID()
+            token: UUID(),
+            startedAt: clock.now()
         )
         feedback = value
         feedbackTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(TargetorFeedbackAnimation.duration))
             guard !Task.isCancelled, self?.feedback?.token == value.token else { return }
             self?.feedback = nil
         }

@@ -31,6 +31,11 @@ public struct TargetorPeriodResolver: Sendable {
         return DateInterval(start: day.start, end: day.end)
     }
 
+    func dayInterval(startingOnLocalDate date: Date, refreshTime: RefreshTime) -> DateInterval {
+        let start = boundary(onLocalDayStarting: calendar.startOfDay(for: date), refreshTime: refreshTime)
+        return DateInterval(start: start, end: nextDailyBoundary(after: start, refreshTime: refreshTime))
+    }
+
     private func nextDailyBoundary(after date: Date, refreshTime: RefreshTime) -> Date {
         var components = DateComponents()
         components.calendar = calendar
@@ -126,12 +131,50 @@ public enum TargetorCompletionLevel: Int, Codable, Equatable, Sendable {
     }
 }
 
+enum TargetorCalendarHue: Int, Equatable, Sendable {
+    case orange
+    case yellow
+    case green
+    case blue
+    case cyan
+
+    static func weekly(sequence: Int) -> TargetorCalendarHue {
+        let normalized = ((sequence % 5) + 5) % 5
+        return TargetorCalendarHue(rawValue: normalized)!
+    }
+}
+
 public struct TargetorCalendarCell: Equatable, Identifiable, Sendable {
     public let date: Date
     public let ratio: Double?
     public let level: TargetorCompletionLevel
     public let periodSequence: Int?
+    let periodFrequency: TargetorFrequency?
     public var id: Date { date }
+}
+
+enum TargetorTargetCalendarGranularity: Equatable, Sendable {
+    case month
+    case year
+}
+
+struct TargetorTargetCalendarWindow: Equatable, Sendable {
+    let frequency: TargetorFrequency
+    let granularity: TargetorTargetCalendarGranularity
+    let anchor: Date
+    let dates: [Date]
+    let intervals: [DateInterval]
+    let leadingEmptyCellCount: Int
+    let queryInterval: DateInterval
+}
+
+struct TargetorTargetCalendarSnapshot: Equatable, Sendable {
+    let targetID: UUID
+    let frequency: TargetorFrequency
+    let granularity: TargetorTargetCalendarGranularity
+    let anchor: Date
+    let leadingEmptyCellCount: Int
+    let cells: [TargetorCalendarCell]
 }
 
 public enum TargetorCalendarCalculator {
@@ -155,9 +198,9 @@ public enum TargetorCalendarCalculator {
         resolver: TargetorPeriodResolver
     ) -> [TargetorCalendarCell] {
         dates.map { date in
-            let interval = resolver.dayInterval(containing: date, refreshTime: refreshTime)
+            let interval = resolver.dayInterval(startingOnLocalDate: date, refreshTime: refreshTime)
             guard interval.start <= now else {
-                return TargetorCalendarCell(date: date, ratio: nil, level: .empty, periodSequence: nil)
+                return emptyCell(date: date)
             }
             let ratios = targets.compactMap { target -> Double? in
                 let created = Date(millisecondsSince1970: target.createdAtMilliseconds)
@@ -169,9 +212,94 @@ public enum TargetorCalendarCalculator {
             }
             let ratio = ratios.isEmpty ? nil : ratios.reduce(0, +) / Double(ratios.count)
             return TargetorCalendarCell(
-                date: date, ratio: ratio, level: TargetorCompletionLevel(ratio: ratio), periodSequence: nil
+                date: date,
+                ratio: ratio,
+                level: TargetorCompletionLevel(ratio: ratio),
+                periodSequence: nil,
+                periodFrequency: nil
             )
         }
+    }
+
+    static func targetWindow(
+        frequency: TargetorFrequency,
+        containing now: Date,
+        offset: Int,
+        refreshTime: RefreshTime,
+        resolver: TargetorPeriodResolver
+    ) -> TargetorTargetCalendarWindow {
+        let calendar = resolver.calendar
+        switch frequency {
+        case .daily, .weekly:
+            let currentMonth = calendar.dateInterval(of: .month, for: now)!.start
+            let anchor = calendar.date(byAdding: .month, value: offset, to: currentMonth)!
+            let month = calendar.dateInterval(of: .month, for: anchor)!
+            let dayRange = calendar.range(of: .day, in: .month, for: anchor)!
+            let dates = dayRange.map { day in
+                calendar.date(byAdding: .day, value: day - 1, to: month.start)!
+            }
+            let intervals = dates.map {
+                resolver.dayInterval(startingOnLocalDate: $0, refreshTime: refreshTime)
+            }
+            let weekday = calendar.component(.weekday, from: month.start)
+            let leadingEmptyCellCount = (weekday - 2 + 7) % 7
+            return TargetorTargetCalendarWindow(
+                frequency: frequency,
+                granularity: .month,
+                anchor: anchor,
+                dates: dates,
+                intervals: intervals,
+                leadingEmptyCellCount: leadingEmptyCellCount,
+                queryInterval: queryInterval(for: intervals)
+            )
+        case .monthly:
+            let currentYear = calendar.dateInterval(of: .year, for: now)!.start
+            let anchor = calendar.date(byAdding: .year, value: offset, to: currentYear)!
+            let year = calendar.dateInterval(of: .year, for: anchor)!
+            let dates = (0..<12).map { calendar.date(byAdding: .month, value: $0, to: year.start)! }
+            let intervals = dates.map { calendar.dateInterval(of: .month, for: $0)! }
+            return TargetorTargetCalendarWindow(
+                frequency: frequency,
+                granularity: .year,
+                anchor: anchor,
+                dates: dates,
+                intervals: intervals,
+                leadingEmptyCellCount: 0,
+                queryInterval: year
+            )
+        }
+    }
+
+    static func targetSnapshot(
+        target: TargetorTarget,
+        periods: [TargetorPeriod],
+        now: Date,
+        window: TargetorTargetCalendarWindow
+    ) -> TargetorTargetCalendarSnapshot {
+        let created = Date(millisecondsSince1970: target.createdAtMilliseconds)
+        let archived = target.archivedAtMilliseconds.map(Date.init(millisecondsSince1970:))
+        let cells = zip(window.dates, window.intervals).map { date, interval in
+            guard interval.start <= now,
+                  created < interval.end,
+                  archived == nil || archived! > interval.start,
+                  let period = period(for: interval, targetID: target.id, periods: periods)
+            else { return emptyCell(date: date) }
+            return TargetorCalendarCell(
+                date: date,
+                ratio: period.ratio,
+                level: TargetorCompletionLevel(ratio: period.ratio),
+                periodSequence: period.sequence,
+                periodFrequency: period.ruleSnapshot.frequency
+            )
+        }
+        return TargetorTargetCalendarSnapshot(
+            targetID: target.id,
+            frequency: window.frequency,
+            granularity: window.granularity,
+            anchor: window.anchor,
+            leadingEmptyCellCount: window.leadingEmptyCellCount,
+            cells: cells
+        )
     }
 
     public static func nineWeekDates(
@@ -185,6 +313,26 @@ public enum TargetorCalendarCalculator {
         let offsetFromMonday = (weekday - 2 + 7) % 7
         let currentMonday = calendar.date(byAdding: .day, value: -offsetFromMonday, to: today)!
         let start = calendar.date(byAdding: .day, value: -56, to: currentMonday)!
-        return (0..<63).map { calendar.date(byAdding: .day, value: $0, to: start)! }
+        let chronological = (0..<63).map { calendar.date(byAdding: .day, value: $0, to: start)! }
+        return (0..<7).flatMap { weekdayIndex in
+            (0..<9).map { weekIndex in chronological[(weekIndex * 7) + weekdayIndex] }
+        }
+    }
+
+    private static func emptyCell(date: Date) -> TargetorCalendarCell {
+        TargetorCalendarCell(
+            date: date,
+            ratio: nil,
+            level: .empty,
+            periodSequence: nil,
+            periodFrequency: nil
+        )
+    }
+
+    private static func queryInterval(for intervals: [DateInterval]) -> DateInterval {
+        DateInterval(
+            start: intervals.map(\.start).min()!,
+            end: intervals.map(\.end).max()!
+        )
     }
 }

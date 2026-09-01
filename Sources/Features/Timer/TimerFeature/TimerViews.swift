@@ -235,8 +235,7 @@ private struct TimerExpandedView: View {
                         Label("新增临时任务", systemImage: "plus.circle.fill")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .buttonStyle(.plain)
-                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .buttonStyle(.borderedProminent)
                     .popover(isPresented: $creatingTemporary, arrowEdge: .bottom) {
                         TimerTemporaryEditor(store: store, task: nil, setEditingText: setEditingText) {
                             creatingTemporary = false
@@ -300,6 +299,11 @@ private struct TimerStatisticsPanel: View {
     }
 }
 
+private enum TimerTaskRowLayout {
+    static let detailsWidth: CGFloat = 170
+    static let auxiliaryControlWidth: CGFloat = 38
+}
+
 private struct TimerTemporaryTaskRow: View {
     @Bindable var store: TimerStore
     let task: TimerTemporaryTask
@@ -311,37 +315,57 @@ private struct TimerTemporaryTaskRow: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let remaining = store.remainingSeconds(for: task, at: context.date)
             HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 3).fill(Color(hex: task.colorHex)).frame(width: 6, height: 34)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
-                        Text(task.name).font(.headline).lineLimit(1)
-                        Text("临时").font(.system(size: 8, weight: .bold)).padding(.horizontal, 4)
-                            .background(.white.opacity(0.15), in: Capsule())
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color(hex: task.colorHex))
+                    .frame(width: 6, height: 34)
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(task.name)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .foregroundStyle(TimerIslandAppearance.primaryText)
+                        Text(task.status == .completed ? "已完成" : formatDuration(remaining))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(
+                                task.status == .completed
+                                    ? Color.green
+                                    : TimerIslandAppearance.secondaryText
+                            )
                     }
-                    Text(task.status == .completed ? "已完成" : formatDuration(remaining))
-                        .font(.caption.monospacedDigit()).foregroundStyle(task.status == .completed ? .green : .secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("编辑", systemImage: "pencil") {
+                        editing = true
+                        setPopoverPresented(true)
+                    }
+                    .labelStyle(.iconOnly)
+                    .frame(width: TimerTaskRowLayout.auxiliaryControlWidth)
+                    .popover(isPresented: $editing, arrowEdge: .bottom) {
+                        TimerTemporaryEditor(store: store, task: task, setEditingText: setEditingText) {
+                            editing = false
+                            setPopoverPresented(false)
+                        }
+                    }
                 }
-                .frame(width: 170, alignment: .leading)
+                .frame(width: TimerTaskRowLayout.detailsWidth)
                 TimerTaskProgressBar(
                     ratio: TimerProgressSnapshot(targetSeconds: task.targetSeconds, remainingSeconds: remaining).ratio,
                     color: Color(hex: task.colorHex)
-                ).frame(minWidth: 80, maxWidth: .infinity).frame(height: 4)
-                Button { editing = true; setPopoverPresented(true) } label: {
-                    Image(systemName: "pencil")
-                }.buttonStyle(.plain)
-                .popover(isPresented: $editing, arrowEdge: .bottom) {
-                    TimerTemporaryEditor(store: store, task: task, setEditingText: setEditingText) {
-                        editing = false; setPopoverPresented(false)
-                    }
-                }
+                )
+                .frame(minWidth: 80, maxWidth: .infinity)
+                .frame(height: 4)
                 if task.status == .running {
-                    Button { Task { try? await store.pause() } } label: { Image(systemName: "pause.fill") }
-                        .buttonStyle(.plain)
+                    Button("暂停", systemImage: "pause.fill") {
+                        Task { try? await store.pause() }
+                    }
+                    .labelStyle(.iconOnly)
                 } else if task.status == .completed {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                 } else {
-                    Button { Task { try? await store.startTemporaryTask(id: task.id) } } label: { Image(systemName: "play.fill") }
-                        .buttonStyle(.plain).disabled(store.hasRunningTask)
+                    Button("开始", systemImage: "play.fill") {
+                        Task { try? await store.startTemporaryTask(id: task.id) }
+                    }
+                    .labelStyle(.iconOnly)
+                    .disabled(store.hasRunningTask)
                 }
             }
             .padding(10).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
@@ -397,7 +421,12 @@ private struct TimerTemporaryEditor: View {
                     .buttonStyle(.borderedProminent).disabled(!isValid)
             }
         }
-        .padding(16).frame(width: 420)
+        .padding(16)
+        .frame(width: 420)
+        .preferredColorScheme(.light)
+        .environment(\.colorScheme, .light)
+        .foregroundStyle(Color.primary)
+        .tint(.accentColor)
         .onDisappear { setEditingText(false) }
     }
 
@@ -452,7 +481,7 @@ private struct TimerTaskRow: View {
                                 : TimerIslandAppearance.secondaryText
                         )
                 }
-                .frame(width: 170, alignment: .leading)
+                .frame(width: TimerTaskRowLayout.detailsWidth, alignment: .leading)
                 TimerTaskProgressBar(ratio: progress.ratio, color: Color(hex: task.colorHex))
                     .frame(minWidth: 80, maxWidth: .infinity)
                     .frame(height: 4)
