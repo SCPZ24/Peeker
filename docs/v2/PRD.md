@@ -386,7 +386,7 @@ Targetor 是 v2.1.0 新增的第 5 张卡：
 - 默认汇总图显示前 8 个完整周加当前周，并对混合周期目标等权平均；
 - 软归档目标保留历史；
 - 不提供 Compact 或定时提醒；成功打卡发布统一 Prompt；
-- 离线内置 Lucide v1.27.0 完整图标目录。
+- 离线内置从 Lucide v1.27.0 固定挑选的 209 张图标。
 
 完整设计见 [Targetor 功能文档](../functions/targetor.md)。
 
@@ -425,7 +425,7 @@ CLI protocol version 与 JSON schema version 继续为 `1`；本轮新增命令�
 - Timer 临时任务边界必须与每日快照、会话拆分和归档原子提交，不能产生不可见运行任务。
 - Targetor 打卡上限在事务内重新校验；软归档不得级联删除历史周期或事件。
 - Lucide 仅从离线、版本化、哈希校验的 Bundle manifest 读取，不接受网络、任意路径或用户 SVG。
-- 全量 Lucide 选择器使用虚拟化网格和本地索引，不能一次实例化全部 SVG View。
+- 精选 Lucide 选择器使用虚拟化网格和本地索引，不能一次实例化全部 SVG View。
 - Resting 不得通过高频轮询维持；Prompt、Scheduler 提醒和各模块边界使用统一时间调度。
 - 禁止为了 CLI 在 App 外复制 GRDB migration 或业务恢复代码。
 - v2.1 仍无账号、遥测、业务数据上传和系统通知。

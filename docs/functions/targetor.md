@@ -272,9 +272,9 @@ UI 或 CLI 每次成功打卡后发布一条静音 Prompt：
 
 ## 9. Lucide 资源
 
-Targetor 离线随 App Bundle 分发 Lucide v1.27.0 完整图标目录和搜索元数据：
+Targetor 离线随 App Bundle 分发从 Lucide v1.27.0 固定挑选的 209 张图标及搜索元数据：
 
-- 不在运行时联网或下载图标；
+- 构建、发行、安装和运行时都不联网下载或补齐 Lucide 图标；
 - 设置页提供虚拟化网格，并按 canonical name 和 manifest tags 本地搜索；
 - 持久化 canonical icon name，不保存路径或 SVG 内容；
 - 只解析 manifest 白名单内的 Bundle 资源，拒绝用户路径、外部文件和未知名称；
@@ -512,7 +512,7 @@ TargetorModule
 
 ### 15.4 资源、迁移与隔离
 
-- [ ] Lucide v1.27.0 完整目录可离线搜索和渲染，未知名称拒绝。
+- [ ] 精选的 209 张 Lucide v1.27.0 图标可离线搜索和渲染，未知名称拒绝。
 - [ ] manifest、哈希、MIT/ISC 许可和 Bundle 资源验证通过。
 - [ ] Targetor 默认启用并追加在 Agentor 后，旧卡顺序和禁用状态不变。
 - [ ] Targetor migration、Repository 和 Store 不修改其他功能卡数据。

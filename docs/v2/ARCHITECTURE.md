@@ -220,12 +220,12 @@ Targetor CLI 周期状态 wire value 固定为 `notStarted | started | progressi
 
 `Resources/Targetor/Lucide/` 固定 vendored Lucide v1.27.0：
 
-- 完整 SVG 图标目录；
+- 固定精选的 209 张 SVG 图标；
 - canonical name/tag 搜索元数据；
 - 版本化 manifest 与每文件 SHA-256；
 - MIT icon artwork notice 与 ISC project metadata/code notice。
 
-构建脚本把目录复制到 `Peeker.app/Contents/Resources/Targetor/Lucide`。Bundle 验证至少检查：manifest schema/version、许可文件、清单数量、全部文件哈希、`target.svg` 和代表性样本可由 CoreSVG 渲染。运行时只通过 manifest 查找，不扫描任意路径。
+构建脚本只把仓库中已提交的精选目录复制到 `Peeker.app/Contents/Resources/Targetor/Lucide`，不执行 vendoring、下载或全量补齐。Bundle 验证至少检查：manifest schema/version、209 张固定清单、许可文件、全部文件哈希、`target.svg` 和代表性样本可由 CoreSVG 渲染。运行时只通过 manifest 查找，不扫描任意路径。
 
 ## 11. 偏好与升级
 

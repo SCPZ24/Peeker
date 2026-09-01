@@ -9,7 +9,7 @@
 - Debug and release `swift build --disable-sandbox --disable-automatic-resolution` both passed.
 - `swift test --disable-sandbox --disable-automatic-resolution` — **261 tests, 0 failures**.
 - Shell syntax, build-script, feature-boundary, CLI-help, and release-script contracts passed; both plist files passed `plutil -lint`.
-- Pinned Lucide v1.27.0 inventory contains **1,756** manifest entries and SVG files; all SHA-256 values matched. `target`, `chevrons-up`, `rocket`, `badge-check`, and `circle` rendered through `sips`.
+- Product-curated Lucide v1.27.0 inventory contains **209** manifest entries and checked-in SVG files; all SHA-256 values matched. `target`, `chevrons-up`, `rocket`, `badge-check`, and `circle` rendered through `sips`. Build, Bundle, and temporary Cask ZIP each contained exactly 209 SVGs without downloading or replenishing the upstream full set.
 - `./scripts/build-app.sh release` built the three arm64 executables in an ad-hoc signed `dist/Peeker.app`.
 - `./scripts/verify-bundle.sh dist/Peeker.app 2.1.0` passed Bundle version, CLI schema/protocol, icon/resource, executable, help, and strict signature checks. Gatekeeper rejection is expected for this local ad-hoc, unnotarized artifact.
 - A temporary `.build/verification/Peeker-v2.1.0.zip` passed `verify-cask.sh 2.1.0`; Ruby syntax and Homebrew style reported no offenses, and the archive contains the embedded CLI and Targetor resources.

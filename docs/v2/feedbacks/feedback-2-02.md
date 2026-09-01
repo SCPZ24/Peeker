@@ -38,7 +38,7 @@
 - GUI 只通过拖到右侧打卡，不提供按钮或撤销；CLI 可 checkin，并按 event ID 撤销当前周期事件。
 - 默认汇总显示前 8 个完整周加当前周；每个日期对当时有效目标的周期完成度等权平均，并使用五级色阶。
 - 删除推进项采用软归档，过去周期和打卡继续参与历史。
-- 图标离线内置 Lucide v1.27.0 全目录；Targetor 自身使用 Lucide `target`。
+- 图标离线内置从 Lucide v1.27.0 固定挑选的 209 张资源；Targetor 自身使用 Lucide `target`，构建和安装不补拉全量目录。
 - UI 与 CLI 成功打卡均发布 `已打卡：<标题> <count>/<max>` Prompt。
 
 完整领域、日历公式、交互、CLI、持久化、Lucide 许可与验收见 [Targetor 功能文档](../../functions/targetor.md)。

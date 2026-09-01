@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""Vendor the pinned Lucide icon set from a verified upstream checkout."""
+"""Validate or refresh the checked-in curated Lucide manifest without network access."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
 VERSION = "1.27.0"
 COMMIT = "4aec3f892fd6c23063bc2fead83c899b5d412b1c"
 FEATURE_ID = "targetor"
-EXPECTED_ICON_COUNT = 1756
+EXPECTED_ICON_COUNT = 209
 
 
 def sha256(path: Path) -> str:
@@ -24,95 +22,99 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def checkout_commit(source: Path) -> str | None:
-    if not (source / ".git").exists():
-        return None
-    try:
-        return subprocess.check_output(
-            ["git", "-C", str(source), "rev-parse", "HEAD"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
+def refreshed_manifest(resource_root: Path) -> dict[str, object]:
+    manifest_path = resource_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("schemaVersion") != 1
+        or manifest.get("featureID") != FEATURE_ID
+        or manifest.get("version") != VERSION
+        or manifest.get("upstreamCommit") != COMMIT
+    ):
+        raise SystemExit("manifest metadata does not match the pinned curated Lucide set")
 
+    entries = manifest.get("icons")
+    if not isinstance(entries, list) or len(entries) != EXPECTED_ICON_COUNT:
+        raise SystemExit(f"expected {EXPECTED_ICON_COUNT} curated manifest entries")
 
-def split_license(source: Path, destination: Path) -> None:
-    text = (source / "LICENSE").read_text(encoding="utf-8")
-    marker = "The MIT License (MIT) (for the icons listed above)"
-    if marker not in text:
-        raise SystemExit("upstream LICENSE does not contain the expected MIT notice")
-    isc, mit = text.split(marker, maxsplit=1)
-    (destination / "LICENSE-ISC.txt").write_text(isc.rstrip() + "\n", encoding="utf-8")
-    (destination / "LICENSE-MIT.txt").write_text(marker + mit, encoding="utf-8")
+    icon_files = sorted((resource_root / "icons").glob("*.svg"))
+    if len(icon_files) != EXPECTED_ICON_COUNT:
+        raise SystemExit(f"expected {EXPECTED_ICON_COUNT} checked-in curated SVG files")
+    actual_paths = {f"icons/{path.name}" for path in icon_files}
 
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--source", required=True, type=Path, help="Lucide 1.27.0 checkout or extracted archive")
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("Resources/Targetor/Lucide"),
-        help="destination resource directory",
-    )
-    args = parser.parse_args()
-    source = args.source.resolve()
-    icons_source = source / "icons"
-    if not icons_source.is_dir():
-        raise SystemExit(f"missing upstream icons directory: {icons_source}")
-    commit = checkout_commit(source)
-    if commit is not None and commit != COMMIT:
-        raise SystemExit(f"expected Lucide commit {COMMIT}, got {commit}")
-
-    svg_files = sorted(icons_source.glob("*.svg"), key=lambda path: path.stem)
-    json_files = {path.stem: path for path in icons_source.glob("*.json")}
-    if len(svg_files) != EXPECTED_ICON_COUNT or len(json_files) != EXPECTED_ICON_COUNT:
-        raise SystemExit(
-            f"expected {EXPECTED_ICON_COUNT} SVG/metadata pairs, "
-            f"got {len(svg_files)} SVG and {len(json_files)} metadata files"
-        )
-
-    output = args.output.resolve()
-    temporary = output.with_name(output.name + ".tmp")
-    shutil.rmtree(temporary, ignore_errors=True)
-    (temporary / "icons").mkdir(parents=True)
-
-    entries: list[dict[str, object]] = []
-    for svg in svg_files:
-        metadata_path = json_files.get(svg.stem)
-        if metadata_path is None:
-            raise SystemExit(f"missing metadata for {svg.name}")
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        tags = metadata.get("tags")
-        if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
-            raise SystemExit(f"invalid tags for {svg.name}")
-        destination = temporary / "icons" / svg.name
-        shutil.copyfile(svg, destination)
-        entries.append(
+    names: set[str] = set()
+    manifest_paths: set[str] = set()
+    refreshed_entries: list[dict[str, object]] = []
+    for raw_entry in entries:
+        if not isinstance(raw_entry, dict):
+            raise SystemExit("invalid curated manifest entry")
+        name = raw_entry.get("name")
+        relative_path = raw_entry.get("file")
+        tags = raw_entry.get("tags")
+        if (
+            not isinstance(name, str)
+            or not isinstance(relative_path, str)
+            or relative_path != f"icons/{name}.svg"
+            or not isinstance(tags, list)
+            or not all(isinstance(tag, str) for tag in tags)
+        ):
+            raise SystemExit(f"invalid curated manifest entry: {raw_entry!r}")
+        if name in names or relative_path in manifest_paths:
+            raise SystemExit(f"duplicate curated Lucide entry: {name}")
+        names.add(name)
+        manifest_paths.add(relative_path)
+        icon_path = resource_root / relative_path
+        if not icon_path.is_file():
+            raise SystemExit(f"missing curated Lucide SVG: {relative_path}")
+        refreshed_entries.append(
             {
-                "name": svg.stem,
-                "file": f"icons/{svg.name}",
+                "name": name,
+                "file": relative_path,
                 "tags": tags,
-                "sha256": sha256(destination),
+                "sha256": sha256(icon_path),
             }
         )
 
-    split_license(source, temporary)
-    manifest = {
+    if manifest_paths != actual_paths:
+        extra = sorted(actual_paths - manifest_paths)
+        missing = sorted(manifest_paths - actual_paths)
+        raise SystemExit(f"curated SVG/manifest mismatch: extra={extra}, missing={missing}")
+
+    return {
         "schemaVersion": 1,
         "featureID": FEATURE_ID,
         "version": VERSION,
         "upstreamCommit": COMMIT,
-        "iconCount": len(entries),
-        "icons": entries,
+        "iconCount": EXPECTED_ICON_COUNT,
+        "icons": refreshed_entries,
     }
-    (temporary / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Validate or refresh the checked-in curated Lucide resources; never downloads icons."
     )
-    shutil.rmtree(output, ignore_errors=True)
-    temporary.rename(output)
-    print(f"Vendored {len(entries)} Lucide {VERSION} icons into {output}")
+    parser.add_argument(
+        "--resource-root",
+        type=Path,
+        default=Path("Resources/Targetor/Lucide"),
+        help="checked-in curated Lucide resource directory",
+    )
+    parser.add_argument("--check", action="store_true", help="fail instead of rewriting a stale manifest")
+    args = parser.parse_args()
+
+    resource_root = args.resource_root.resolve()
+    manifest_path = resource_root / "manifest.json"
+    refreshed = refreshed_manifest(resource_root)
+    rendered = json.dumps(refreshed, ensure_ascii=False, indent=2) + "\n"
+    current = manifest_path.read_text(encoding="utf-8")
+    if args.check:
+        if current != rendered:
+            raise SystemExit("curated Lucide manifest hashes are stale")
+        print(f"Validated {EXPECTED_ICON_COUNT} curated Lucide icons without network access")
+        return
+    manifest_path.write_text(rendered, encoding="utf-8")
+    print(f"Refreshed {EXPECTED_ICON_COUNT} curated Lucide manifest entries")
 
 
 if __name__ == "__main__":

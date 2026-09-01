@@ -91,7 +91,7 @@ done
     manifest["featureID"] == "targetor" && manifest["version"] == "1.27.0" &&
     manifest["upstreamCommit"] == "4aec3f892fd6c23063bc2fead83c899b5d412b1c"
   icons = manifest.fetch("icons")
-  abort "Lucide icon count mismatch" unless manifest["iconCount"] == 1756 && icons.length == 1756
+  abort "Lucide icon count mismatch" unless manifest["iconCount"] == 209 && icons.length == 209
   icons.each do |icon|
     path = icon.fetch("file")
     abort "invalid Lucide resource path: #{path}" if Pathname.new(path).absolute? || path.split("/").include?("..")
