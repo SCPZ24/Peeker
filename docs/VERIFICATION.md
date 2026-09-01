@@ -1,4 +1,52 @@
-# Verification record — 2026-08-19 — v2.0.0
+# Verification record — 2026-09-01 — v2.1.0
+
+## Passed
+
+- `swift test --filter FunctionCardKitTests` — **43 tests, 0 failures**.
+- `swift test --filter Timer` — **43 tests, 0 failures**.
+- `swift test --filter Targetor` — **11 tests, 0 failures**.
+- `swift package describe` completed and includes Targetor Feature/GRDBAdapter/Module targets and tests.
+- Debug and release `swift build --disable-sandbox --disable-automatic-resolution` both passed.
+- `swift test --disable-sandbox --disable-automatic-resolution` — **261 tests, 0 failures**.
+- Shell syntax, build-script, feature-boundary, CLI-help, and release-script contracts passed; both plist files passed `plutil -lint`.
+- Pinned Lucide v1.27.0 inventory contains **1,756** manifest entries and SVG files; all SHA-256 values matched. `target`, `chevrons-up`, `rocket`, `badge-check`, and `circle` rendered through `sips`.
+- `./scripts/build-app.sh release` built the three arm64 executables in an ad-hoc signed `dist/Peeker.app`.
+- `./scripts/verify-bundle.sh dist/Peeker.app 2.1.0` passed Bundle version, CLI schema/protocol, icon/resource, executable, help, and strict signature checks. Gatekeeper rejection is expected for this local ad-hoc, unnotarized artifact.
+- A temporary `.build/verification/Peeker-v2.1.0.zip` passed `verify-cask.sh 2.1.0`; Ruby syntax and Homebrew style reported no offenses, and the archive contains the embedded CLI and Targetor resources.
+- `git diff --check` passed.
+
+## CLI and migration boundary
+
+With Peeker stopped:
+
+- `peeker-cli --version` returned CLI `2.1.0`, protocol `1`, schema `1`.
+- `status` returned `running:false`.
+- Timer, Timer temporary, Pusher, Scheduler, and Targetor feature reads returned `app_not_running` with exit `3`.
+- `peeker agentor list` remained unavailable and returned `invalid_usage` with exit `2`.
+
+After launching the verified Bundle with an isolated Application Support root, `status` reported App `2.1.0`, protocol `1`, and a positive pid. Read routes succeeded for `timer config get`, `timer temporary list`, `pusher config get`, `scheduler config get`, `targetor config get`, and `targetor list`. End-to-end CLI mutations also succeeded for Timer temporary create/get/start/pause/update/list/delete and Targetor create/get/checkin/history/uncheck/update/delete/archive-list; both runs ended with SQLite integrity and foreign-key checks passing. The fresh SQLite database recorded:
+
+```text
+pusher-schema-v1
+scheduler-schema-v1
+targetor-schema-v1
+timer-schema-v1
+timer-temporary-schema-v1
+v1
+v2-feature-runtime-state
+```
+
+Legacy migration coverage also passed in the Timer/Pusher adapter suites, including old Timer sessions defaulting to daily and additive temporary-task migration.
+
+## Not performed
+
+- No formal ZIP under `dist/`, commit, tag, GitHub Release, external Tap update, or remote push was created.
+- Notch/non-notch geometry, Timer dynamic-height animation, Targetor drag/hover/calendar visuals, Reduce Motion, multi-display/Spaces/full-screen behavior, and sleep/wake hardware scenarios remain manual checks in `docs/LOCAL_ACCEPTANCE.md`.
+- No user-provided v2.0.2 Application Support/preferences backup was available for a destructive-copy upgrade rehearsal; additive legacy migration behavior is covered by automated database tests and the fresh-Bundle migration run above.
+
+---
+
+# Historical verification record — 2026-08-19 — v2.0.0
 
 ## Passed
 

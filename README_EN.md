@@ -10,7 +10,7 @@
 
 A native macOS productivity tool built entirely with Swift.
 
-> The current public release is **v2.0.2**, adding Agentor status aggregation for Claude Code, OpenCode, Hermes, Pi, and Codex while retaining the resting island, Timer, Scheduler, and the `peeker` CLI. The screenshots below are historical v1 screenshots.
+> The current version is **v2.1.0**, with five built-in cards: Timer daily/temporary tasks, Pusher, Scheduler, Agentor, and Targetor. The `peeker` CLI manages Timer, Pusher, Scheduler, and Targetor. The screenshots below remain historical v1 screenshots.
 
 ## Preview (v1)
 
@@ -37,6 +37,8 @@ The Cask installs the App and exposes its embedded CLI as `peeker`:
 ```bash
 peeker --version
 peeker status
+peeker timer temporary list
+peeker targetor list
 ```
 
 Except for `--version` and `status`, CLI commands require the App to be running; the CLI neither launches it nor opens SQLite directly. After the first launch, go to **System Settings → Privacy & Security** and choose to trust Peeker.

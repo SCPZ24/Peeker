@@ -19,6 +19,8 @@ let package = Package(
         .library(name: "AgentorProtocol", targets: ["AgentorProtocol"]),
         .library(name: "AgentorFeature", targets: ["AgentorFeature"]),
         .library(name: "AgentorModule", targets: ["AgentorModule"]),
+        .library(name: "TargetorFeature", targets: ["TargetorFeature"]),
+        .library(name: "TargetorModule", targets: ["TargetorModule"]),
         .executable(name: "peeker-agentor-hook", targets: ["PeekerAgentorHook"]),
         .library(name: "PersistenceCore", targets: ["PersistenceCore"]),
         .library(name: "MacPlatform", targets: ["MacPlatform"]),
@@ -56,6 +58,11 @@ let package = Package(
             path: "Sources/Features/Agentor/AgentorFeature"
         ),
         .target(
+            name: "TargetorFeature",
+            dependencies: ["PeekerCore", "FunctionCardKit"],
+            path: "Sources/Features/Targetor/TargetorFeature"
+        ),
+        .target(
             name: "PersistenceCore",
             dependencies: ["PeekerCore", .product(name: "GRDB", package: "GRDB.swift")]
         ),
@@ -73,6 +80,11 @@ let package = Package(
             name: "SchedulerGRDBAdapter",
             dependencies: ["SchedulerFeature", "PersistenceCore", .product(name: "GRDB", package: "GRDB.swift")],
             path: "Sources/Features/Scheduler/SchedulerGRDBAdapter"
+        ),
+        .target(
+            name: "TargetorGRDBAdapter",
+            dependencies: ["TargetorFeature", "PersistenceCore", .product(name: "GRDB", package: "GRDB.swift")],
+            path: "Sources/Features/Targetor/TargetorGRDBAdapter"
         ),
         .target(name: "MacPlatform", dependencies: ["PeekerCore", "FunctionCardKit"]),
         .target(
@@ -111,6 +123,14 @@ let package = Package(
             ],
             path: "Sources/Features/Agentor/AgentorModule"
         ),
+        .target(
+            name: "TargetorModule",
+            dependencies: [
+                "FeatureRuntimeKit", "FunctionCardKit", "MacPlatform", "PeekerCore", "PeekerProtocol",
+                "PersistenceCore", "TargetorFeature", "TargetorGRDBAdapter",
+            ],
+            path: "Sources/Features/Targetor/TargetorModule"
+        ),
         .executableTarget(
             name: "PeekerAgentorHook",
             dependencies: ["AgentorProtocol"],
@@ -124,7 +144,7 @@ let package = Package(
             name: "PeekerApp",
             dependencies: [
                 "PeekerCore", "PeekerProtocol", "PeekerIPC", "FunctionCardKit", "PersistenceCore", "MacPlatform",
-                "FeatureRuntimeKit", "TimerModule", "PusherModule", "SchedulerModule", "AgentorModule",
+                "FeatureRuntimeKit", "TimerModule", "PusherModule", "SchedulerModule", "AgentorModule", "TargetorModule",
             ]
         ),
         .testTarget(name: "PeekerProtocolTests", dependencies: ["PeekerProtocol"]),
@@ -196,6 +216,16 @@ let package = Package(
             path: "Tests/Features/Scheduler/SchedulerModuleTests"
         ),
         .testTarget(
+            name: "TargetorFeatureTests",
+            dependencies: ["TargetorFeature", "PeekerCore"],
+            path: "Tests/Features/Targetor/TargetorFeatureTests"
+        ),
+        .testTarget(
+            name: "TargetorGRDBAdapterTests",
+            dependencies: ["TargetorGRDBAdapter", "TargetorFeature", "PersistenceCore", .product(name: "GRDB", package: "GRDB.swift")],
+            path: "Tests/Features/Targetor/TargetorGRDBAdapterTests"
+        ),
+        .testTarget(
             name: "AgentorFeatureTests",
             dependencies: ["AgentorFeature", "AgentorProtocol", "FunctionCardKit", "PeekerCore"],
             path: "Tests/Features/Agentor/AgentorFeatureTests"
@@ -204,6 +234,11 @@ let package = Package(
             name: "AgentorModuleTests",
             dependencies: ["AgentorModule", "AgentorFeature", "AgentorProtocol", "FeatureRuntimeKit", "MacPlatform", "PeekerCore", "PeekerProtocol"],
             path: "Tests/Features/Agentor/AgentorModuleTests"
+        ),
+        .testTarget(
+            name: "TargetorModuleTests",
+            dependencies: ["TargetorModule", "TargetorFeature", "FeatureRuntimeKit", "PeekerProtocol", "PersistenceCore", "MacPlatform", "PeekerCore"],
+            path: "Tests/Features/Targetor/TargetorModuleTests"
         ),
         .testTarget(
             name: "PeekerAgentorHookTests",

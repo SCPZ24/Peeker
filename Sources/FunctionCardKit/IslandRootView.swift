@@ -101,7 +101,10 @@ public struct IslandRootView: View {
 
     private func promptContent(_ prompt: FunctionCardPrompt) -> some View {
         HStack(spacing: 10) {
-            FunctionCardPromptGlyph(prompt: prompt)
+            FunctionCardPromptGlyph(
+                prompt: prompt,
+                manifest: coordinator.registry.registrations.first(where: { $0.id == prompt.sourceID })?.iconManifest
+            )
             VStack(alignment: .leading, spacing: 2) {
                 Text(prompt.moduleName).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Text(prompt.summary).font(.subheadline).lineLimit(1).truncationMode(.tail)
@@ -118,8 +121,12 @@ public struct IslandRootView: View {
             HStack(spacing: 8) {
                 ForEach(coordinator.registry.enabledCards) { card in
                     Button { coordinator.select(card.id) } label: {
-                        Label(card.name, systemImage: card.systemImage)
-                            .labelStyle(.iconOnly)
+                        FunctionCardIconView(
+                            descriptor: card.iconDescriptor,
+                            manifest: card.iconManifest,
+                            accessibilityLabel: card.name
+                        )
+                            .frame(width: 16, height: 16)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(

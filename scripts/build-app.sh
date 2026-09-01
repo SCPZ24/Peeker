@@ -50,6 +50,7 @@ cp "$BIN_DIR/peeker-cli" "$MACOS_DIR/peeker-cli"
 cp "$BIN_DIR/peeker-agentor-hook" "$MACOS_DIR/peeker-agentor-hook"
 cp "$ROOT_DIR/Resources/Info.plist" "$CONTENTS/Info.plist"
 cp -R "$ROOT_DIR/Resources/Agentor" "$CONTENTS/Resources/Agentor"
+cp -R "$ROOT_DIR/Resources/Targetor" "$CONTENTS/Resources/Targetor"
 "$ROOT_DIR/scripts/build-icon.sh" "$CONTENTS/Resources/Peeker.icns"
 chmod +x "$MACOS_DIR/$APP_NAME" "$MACOS_DIR/peeker-cli" "$MACOS_DIR/peeker-agentor-hook"
 

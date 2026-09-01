@@ -10,6 +10,8 @@ CLI_EXECUTABLE="$APP_BUNDLE/Contents/MacOS/peeker-cli"
 AGENTOR_HELPER="$APP_BUNDLE/Contents/MacOS/peeker-agentor-hook"
 AGENTOR_RESOURCES="$APP_BUNDLE/Contents/Resources/Agentor"
 AGENTOR_LOGOS="$AGENTOR_RESOURCES/logos"
+LUCIDE_RESOURCES="$APP_BUNDLE/Contents/Resources/Targetor/Lucide"
+LUCIDE_MANIFEST="$LUCIDE_RESOURCES/manifest.json"
 
 test -x "$EXECUTABLE"
 test -x "$CLI_EXECUTABLE"
@@ -81,10 +83,47 @@ for logo in "${EXPECTED_AGENTOR_LOGOS[@]}"; do
     *Warning*|*Error*) echo "CoreSVG rejected Agentor logo: $LOGO_FILE" >&2; exit 1 ;;
   esac
 done
+
+/usr/bin/ruby -rjson -rdigest -rpathname -e '
+  root = ARGV.fetch(0)
+  manifest = JSON.parse(File.read(File.join(root, "manifest.json")))
+  abort "invalid Lucide manifest" unless manifest["schemaVersion"] == 1 &&
+    manifest["featureID"] == "targetor" && manifest["version"] == "1.27.0" &&
+    manifest["upstreamCommit"] == "4aec3f892fd6c23063bc2fead83c899b5d412b1c"
+  icons = manifest.fetch("icons")
+  abort "Lucide icon count mismatch" unless manifest["iconCount"] == 1756 && icons.length == 1756
+  icons.each do |icon|
+    path = icon.fetch("file")
+    abort "invalid Lucide resource path: #{path}" if Pathname.new(path).absolute? || path.split("/").include?("..")
+    file = File.join(root, path)
+    abort "missing Lucide resource: #{path}" unless File.file?(file)
+    abort "Lucide resource hash mismatch: #{path}" unless Digest::SHA256.file(file).hexdigest == icon.fetch("sha256")
+  end
+' "$LUCIDE_RESOURCES"
+test -s "$LUCIDE_RESOURCES/LICENSE-ISC.txt"
+test -s "$LUCIDE_RESOURCES/LICENSE-MIT.txt"
+test "$(find "$LUCIDE_RESOURCES/icons" -maxdepth 1 -type f -name '*.svg' | wc -l | tr -d ' ')" = "$(/usr/bin/ruby -rjson -e 'puts JSON.parse(File.read(ARGV.fetch(0))).fetch("iconCount")' "$LUCIDE_MANIFEST")"
+for icon in target chevrons-up rocket badge-check circle; do
+  SVG_FILE="$LUCIDE_RESOURCES/icons/$icon.svg"
+  test -s "$SVG_FILE"
+  PREVIEW="$(mktemp -t "peeker-lucide-$icon").png"
+  if ! RENDER_OUTPUT="$(CORESVG_VERBOSE=1 /usr/bin/sips -s format png --resampleHeightWidth 64 64 "$SVG_FILE" --out "$PREVIEW" 2>&1)"; then
+    rm -f "$PREVIEW"
+    echo "failed to render Lucide icon: $SVG_FILE" >&2
+    exit 1
+  fi
+  rm -f "$PREVIEW"
+  case "$RENDER_OUTPUT" in
+    *Warning*|*Error*) echo "CoreSVG rejected Lucide icon: $SVG_FILE" >&2; exit 1 ;;
+  esac
+done
+
 CLI_VERSION_JSON="$("$CLI_EXECUTABLE" --version)"
 CLI_ROOT_HELP="$("$CLI_EXECUTABLE" --help)"
 CLI_FEATURE_HELP="$("$CLI_EXECUTABLE" scheduler --help)"
 CLI_LEAF_HELP="$("$CLI_EXECUTABLE" scheduler source import --help)"
+CLI_TIMER_TEMPORARY_HELP="$("$CLI_EXECUTABLE" timer temporary --help)"
+CLI_TARGETOR_HELP="$("$CLI_EXECUTABLE" targetor --help)"
 case "$CLI_ROOT_HELP" in
   *"Usage: peeker <command>"*) ;;
   *) echo "embedded CLI root help is invalid" >&2; exit 1 ;;
@@ -100,6 +139,14 @@ esac
 case "$CLI_LEAF_HELP" in
   *"Usage: peeker scheduler source import --file <path>"*) ;;
   *) echo "embedded CLI leaf help is invalid" >&2; exit 1 ;;
+esac
+case "$CLI_TIMER_TEMPORARY_HELP" in
+  *"Usage: peeker timer temporary <command> [arguments]"*) ;;
+  *) echo "embedded Timer temporary help is invalid" >&2; exit 1 ;;
+esac
+case "$CLI_TARGETOR_HELP" in
+  *"Usage: peeker targetor <command> [arguments]"*) ;;
+  *) echo "embedded Targetor help is invalid" >&2; exit 1 ;;
 esac
 /usr/bin/ruby -rjson -e '
   value = JSON.parse(ARGV.fetch(0))

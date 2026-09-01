@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FunctionCardPromptGlyph: View {
     let prompt: FunctionCardPrompt
+    let manifest: FunctionCardIconManifest?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -49,7 +50,7 @@ struct FunctionCardPromptGlyph: View {
     }
 
     private var image: some View {
-        Image(systemName: prompt.systemImage)
+        FunctionCardIconView(descriptor: prompt.iconDescriptor, manifest: manifest)
             .font(.title3.weight(.semibold))
     }
 

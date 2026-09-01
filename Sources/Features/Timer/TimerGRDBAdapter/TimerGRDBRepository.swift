@@ -77,6 +77,7 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
             )
             try persistBusinessDay(transition.settledState.businessDay, in: db)
             for task in transition.settledState.tasks { try Self.upsert(task, db: db) }
+            for task in transition.settledState.temporaryTasks { try Self.upsert(task, db: db) }
             if let completion = transition.completion { try Self.finish(completion, db: db) }
             try db.execute(
                 sql: """
@@ -92,14 +93,32 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
                     transition.snapshot.completedAtMilliseconds,
                 ]
             )
+            for var task in transition.settledState.temporaryTasks where task.archivedAtMilliseconds == nil {
+                let reason: TimerTemporaryArchiveReason?
+                if task.expireOnRefresh { reason = .expiredAtBoundary }
+                else if task.status == .completed { reason = .completedAtBoundary }
+                else { reason = nil }
+                if let reason {
+                    task.archivedAtMilliseconds = transition.boundaryMilliseconds
+                    task.archiveReason = reason
+                    task.updatedAtMilliseconds = transition.boundaryMilliseconds
+                    try Self.upsert(task, db: db)
+                }
+            }
             try persistBusinessDay(transition.nextDay, in: db)
             try Self.ensureDayInstances(transition.nextDay, db: db)
             var nextState = try Self.fetchDay(transition.nextDay, db: db)
             if let templateID = transition.continuingTemplateID,
                let task = nextState.tasks.first(where: { $0.templateID == templateID }) {
                 try nextState.start(taskID: task.id, atMilliseconds: transition.boundaryMilliseconds)
+            } else if let taskID = transition.continuingTemporaryTaskID,
+                      nextState.temporaryTasks.contains(where: { $0.id == taskID }) {
+                try nextState.start(identity: .temporary(taskID: taskID), atMilliseconds: transition.boundaryMilliseconds)
+            }
+            if let session = nextState.activeSession {
                 for nextTask in nextState.tasks { try Self.upsert(nextTask, db: db) }
-                if let session = nextState.activeSession { try Self.insertSession(session, db: db) }
+                for temporary in nextState.temporaryTasks { try Self.upsert(temporary, db: db) }
+                try Self.insertSession(session, db: db)
             }
             try Self.moveRuntimePointer(
                 to: transition.nextDay,
@@ -246,6 +265,55 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
         }
     }
 
+    public func loadTemporaryTasks() async throws -> [TimerTemporaryTask] {
+        try await database.queue.read { db in try Self.fetchTemporaryTasks(db: db) }
+    }
+
+    public func saveTemporaryTask(_ task: TimerTemporaryTask) async throws {
+        try await database.queue.write { db in try Self.upsert(task, db: db) }
+    }
+
+    public func archiveTemporaryTask(
+        _ task: TimerTemporaryTask,
+        completion: TimerSessionCompletion?,
+        reason: TimerTemporaryArchiveReason,
+        atMilliseconds: Int64
+    ) async throws {
+        try await database.queue.write { db in
+            if let completion { try Self.finish(completion, db: db) }
+            var archived = task
+            archived.archivedAtMilliseconds = atMilliseconds
+            archived.archiveReason = reason
+            archived.updatedAtMilliseconds = atMilliseconds
+            archived.status = archived.status == .running ? .paused : archived.status
+            try Self.upsert(archived, db: db)
+        }
+    }
+
+    public func commitTemporaryStart(
+        state: TimerDayState,
+        task: TimerTemporaryTask,
+        session: TimerSession
+    ) async throws {
+        try await database.queue.write { db in
+            for daily in state.tasks { try Self.upsert(daily, db: db) }
+            try Self.upsert(task, db: db)
+            try Self.insertSession(session, db: db)
+        }
+    }
+
+    public func commitTemporaryCompletion(
+        state: TimerDayState,
+        task: TimerTemporaryTask,
+        completion: TimerSessionCompletion
+    ) async throws {
+        try await database.queue.write { db in
+            for daily in state.tasks { try Self.upsert(daily, db: db) }
+            try Self.upsert(task, db: db)
+            try Self.finish(completion, db: db)
+        }
+    }
+
     private static func fetchTemplates(_ db: Database) throws -> [TimerTemplate] {
         try Row.fetchAll(db, sql: "SELECT * FROM timer_templates ORDER BY position, updated_at_ms").map { row in
             try TimerTemplate(
@@ -355,6 +423,7 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
                 isVisible: row["visible"]
             )
         }
+        let temporaryTasks = try fetchTemporaryTasks(db: db)
         let activeRow = try Row.fetchOne(
             db,
             sql: """
@@ -368,11 +437,17 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
             TimerSession(
                 id: UUID(uuidString: row["id"])!,
                 taskID: UUID(uuidString: row["task_id"])!,
+                taskKind: TimerTaskKind(rawValue: row["task_kind"]) ?? .daily,
                 businessDayID: day.id,
                 startedAtMilliseconds: row["started_at_ms"]
             )
         }
-        return TimerDayState(businessDay: day, tasks: tasks, activeSession: active)
+        return TimerDayState(
+            businessDay: day,
+            tasks: tasks,
+            temporaryTasks: temporaryTasks,
+            activeSession: active
+        )
     }
 
     private static func upsert(_ task: TimerTaskInstance, db: Database) throws {
@@ -402,6 +477,51 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
         )
     }
 
+    private static func fetchTemporaryTasks(db: Database) throws -> [TimerTemporaryTask] {
+        try Row.fetchAll(
+            db,
+            sql: """
+            SELECT * FROM timer_temporary_tasks
+            WHERE archived_at_ms IS NULL
+            ORDER BY created_at_ms, id
+            """
+        ).map { row in
+            let archived: Int64? = row["archived_at_ms"]
+            let reasonRaw: String? = row["archive_reason"]
+            return try TimerTemporaryTask(
+                id: UUID(uuidString: row["id"])!,
+                name: row["name"], targetSeconds: row["target_seconds"],
+                colorHex: row["color_hex"], accumulatedSeconds: row["accumulated_seconds"],
+                status: TimerTaskStatus(rawValue: row["status"]) ?? .idle,
+                expireOnRefresh: row["expire_on_refresh"],
+                createdAtMilliseconds: row["created_at_ms"], updatedAtMilliseconds: row["updated_at_ms"],
+                archivedAtMilliseconds: archived,
+                archiveReason: reasonRaw.flatMap(TimerTemporaryArchiveReason.init(rawValue:))
+            )
+        }
+    }
+
+    private static func upsert(_ task: TimerTemporaryTask, db: Database) throws {
+        try db.execute(
+            sql: """
+            INSERT INTO timer_temporary_tasks
+            (id,name,target_seconds,color_hex,accumulated_seconds,status,expire_on_refresh,created_at_ms,updated_at_ms,archived_at_ms,archive_reason)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,target_seconds=excluded.target_seconds,color_hex=excluded.color_hex,
+                accumulated_seconds=excluded.accumulated_seconds,status=excluded.status,
+                expire_on_refresh=excluded.expire_on_refresh,updated_at_ms=excluded.updated_at_ms,
+                archived_at_ms=excluded.archived_at_ms,archive_reason=excluded.archive_reason
+            """,
+            arguments: [
+                task.id.uuidString, task.name, task.targetSeconds, task.colorHex,
+                task.accumulatedSeconds, task.status.rawValue, task.expireOnRefresh,
+                task.createdAtMilliseconds, task.updatedAtMilliseconds,
+                task.archivedAtMilliseconds, task.archiveReason?.rawValue,
+            ]
+        )
+    }
+
     private static func finish(_ completion: TimerSessionCompletion, db: Database) throws {
         try db.execute(
             sql: """
@@ -420,11 +540,11 @@ public final class TimerGRDBRepository: TimerRepository, @unchecked Sendable {
         try db.execute(
             sql: """
             INSERT INTO timer_sessions
-                (id, task_id, feature_id, day_start_at_ms, started_at_ms, active)
-            VALUES (?, ?, ?, ?, ?, 1)
+                (id, task_id, task_kind, feature_id, day_start_at_ms, started_at_ms, active)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
             """,
             arguments: [
-                session.id.uuidString, session.taskID.uuidString,
+                session.id.uuidString, session.taskID.uuidString, session.taskKind.rawValue,
                 session.businessDayID.featureID.rawValue,
                 session.businessDayID.startAtMilliseconds,
                 session.startedAtMilliseconds,

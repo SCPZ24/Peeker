@@ -111,6 +111,7 @@ public final class IslandPanelController {
             _ = coordinator.surfaceDescription
             _ = coordinator.registry.selectedID
             _ = coordinator.registry.enabledIDs
+            _ = coordinator.registry.selectedCard?.layoutState.currentExpandedSize
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.updateFrame(animated: true)
@@ -159,10 +160,7 @@ public final class IslandPanelController {
             auxiliaryTopRightWidth: auxiliaryTopRightWidth
         )
         let expandedFrame = IslandPanelGeometry.frame(
-            requestedSize: CGSize(
-                width: selected.metrics.expandedWidth,
-                height: selected.metrics.expandedHeight
-            ),
+            requestedSize: selected.layoutState.currentExpandedSize,
             screenFrame: screen.frame,
             safeTopInset: screen.safeAreaInsets.top,
             auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,

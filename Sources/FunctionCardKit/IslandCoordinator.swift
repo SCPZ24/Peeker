@@ -119,8 +119,25 @@ public final class IslandCoordinator {
     }
 
     public func publishPrompt(_ prompt: FunctionCardPrompt) {
-        guard registry.enabledIDs.contains(prompt.sourceID) else { return }
+        guard registry.enabledIDs.contains(prompt.sourceID),
+              let registration = registry.registrations.first(where: { $0.id == prompt.sourceID }),
+              Self.isTrusted(prompt.iconDescriptor, for: registration)
+        else { return }
         _ = promptCenter.publish(prompt)
+    }
+
+    private static func isTrusted(
+        _ descriptor: FunctionCardIconDescriptor,
+        for registration: FunctionCardRegistration
+    ) -> Bool {
+        switch descriptor {
+        case .systemSymbol:
+            return true
+        case let .bundleSVG(featureID, name):
+            return featureID == registration.id
+                && registration.iconManifest?.featureID == featureID
+                && registration.iconManifest?.contains(name) == true
+        }
     }
 
     public func revokePrompt(token: String) {

@@ -6,7 +6,7 @@ cask "peeker" do
 
   url "https://github.com/SCPZ24/Peeker/releases/download/v#{version}/Peeker-v#{version}.zip"
   name "Peeker"
-  desc "Local productivity island with Timer, Pusher, Scheduler, and CLI"
+  desc "Local productivity island with Timer, Pusher, Scheduler, Targetor, and CLI"
   homepage "https://github.com/SCPZ24/Peeker"
 
   depends_on arch: :arm64

@@ -18,7 +18,7 @@ swift package dump-package | ruby -rjson -e '
   package = JSON.parse(STDIN.read)
   targets = package.fetch("targets").to_h { |target| [target.fetch("name"), target] }
   framework_targets = %w[PeekerCore FunctionCardKit PersistenceCore MacPlatform FeatureRuntimeKit]
-  feature_targets = %w[TimerFeature TimerGRDBAdapter TimerModule PusherFeature PusherGRDBAdapter PusherModule SchedulerFeature SchedulerGRDBAdapter SchedulerModule AgentorFeature AgentorModule]
+  feature_targets = %w[TimerFeature TimerGRDBAdapter TimerModule PusherFeature PusherGRDBAdapter PusherModule SchedulerFeature SchedulerGRDBAdapter SchedulerModule AgentorFeature AgentorModule TargetorFeature TargetorGRDBAdapter TargetorModule]
 
   framework_targets.each do |name|
     dependencies = targets.fetch(name).fetch("dependencies").map { |dependency|
@@ -38,7 +38,7 @@ framework_paths=(
 )
 
 if search_sources \
-  'TimerFeature|PusherFeature|SchedulerFeature|AgentorFeature|TimerGRDBAdapter|PusherGRDBAdapter|SchedulerGRDBAdapter|timer_|pusher_|scheduler_|agentor_|timerRefresh|timerStatisticsMode|pusherRefresh|pusherCarryIncomplete|FeatureID\.(timer|pusher|scheduler|agentor)|"(timer|pusher|scheduler|agentor)"' \
+  'TimerFeature|PusherFeature|SchedulerFeature|AgentorFeature|TargetorFeature|TimerGRDBAdapter|PusherGRDBAdapter|SchedulerGRDBAdapter|TargetorGRDBAdapter|timer_|pusher_|scheduler_|agentor_|targetor_|timerRefresh|timerStatisticsMode|pusherRefresh|pusherCarryIncomplete|FeatureID\.(timer|pusher|scheduler|agentor|targetor)|"(timer|pusher|scheduler|agentor|targetor)"' \
   "${framework_paths[@]}"; then
   echo "Concrete feature knowledge leaked into framework sources." >&2
   exit 1
@@ -49,7 +49,7 @@ while IFS= read -r source; do
   app_sources+=("$source")
 done < <(find Sources/PeekerApp -type f -name '*.swift' ! -name 'BuiltInFeatureModules.swift' -print)
 
-if search_sources 'TimerModule|PusherModule|SchedulerModule|AgentorModule|TimerFeature|PusherFeature|SchedulerFeature|AgentorFeature|TimerGRDBAdapter|PusherGRDBAdapter|SchedulerGRDBAdapter' "${app_sources[@]}"; then
+if search_sources 'TimerModule|PusherModule|SchedulerModule|AgentorModule|TargetorModule|TimerFeature|PusherFeature|SchedulerFeature|AgentorFeature|TargetorFeature|TimerGRDBAdapter|PusherGRDBAdapter|SchedulerGRDBAdapter|TargetorGRDBAdapter' "${app_sources[@]}"; then
   echo "Concrete feature assembly is allowed only in BuiltInFeatureModules.swift." >&2
   exit 1
 fi

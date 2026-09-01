@@ -3,7 +3,7 @@ import Foundation
 public enum PeekerContract {
     public static let schemaVersion = 1
     public static let protocolVersion = 1
-    public static let appVersion = "2.0.2"
+    public static let appVersion = "2.1.0"
     public static let maximumFrameBytes = 16 * 1_024 * 1_024
 }
 
@@ -64,15 +64,19 @@ public struct PeekerError: Error, Codable, Equatable, Sendable {
     public var exitCode: Int32 {
         switch code {
         case "invalid_usage", "validation_error",
-             "timer_invalid_duration", "timer_invalid_color",
+             "timer_invalid_duration", "timer_invalid_color", "timer_invalid_preset_color",
+             "targetor_invalid_title", "targetor_invalid_icon", "targetor_invalid_period", "targetor_invalid_max_count",
              "pusher_invalid_title", "pusher_invalid_urgency", "pusher_invalid_status",
              "scheduler_invalid_title", "scheduler_invalid_time_range", "scheduler_invalid_recurrence": 2
         case "app_not_running", "ipc_unavailable", "ipc_timeout": 3
         case "not_found", "ambiguous_selector", "timer_target_not_found",
-             "pusher_target_not_found", "scheduler_occurrence_not_found", "scheduler_source_not_found": 4
+             "pusher_target_not_found", "scheduler_occurrence_not_found", "scheduler_source_not_found",
+             "targetor_event_not_found": 4
         case "conflict", "card_enablement_conflict", "timer_already_running", "timer_no_active_task",
              "timer_task_completed", "pusher_target_wrong_column", "scheduler_scope_required",
-             "scheduler_scope_not_allowed", "scheduler_source_path_conflict": 5
+             "scheduler_scope_not_allowed", "scheduler_source_path_conflict",
+             "timer_temporary_creation_disabled", "targetor_cycle_complete",
+             "targetor_event_not_current", "targetor_target_archived": 5
         case "protocol_mismatch": 7
         default: 6
         }

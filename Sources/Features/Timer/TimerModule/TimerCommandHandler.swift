@@ -27,6 +27,7 @@ struct TimerCommandHandler {
             case "start": return try await start(Array(args.dropFirst()))
             case "pause": return try await pause()
             case "move": return try await move(Array(args.dropFirst()))
+            case "temporary": return try await temporary(Array(args.dropFirst()))
             case "config": return try await config(Array(args.dropFirst()))
             default: throw usage("Unknown timer command")
             }
@@ -67,7 +68,7 @@ struct TimerCommandHandler {
 
     private func start(_ args:[String]) async throws -> PeekerEnvelope {
         let selector=try Selector(args); let selected=try task(for:selector)
-        if let active=store.runningTask,active.templateID != selected.templateID { throw PeekerError(code:"timer_already_running",message:"Another task is running") }
+        if store.hasRunningTask, store.runningTask?.templateID != selected.templateID { throw PeekerError(code:"timer_already_running",message:"Another task is running") }
         if selected.status == .completed { throw PeekerError(code:"timer_task_completed",message:"Task is completed") }
         await store.start(taskID:selected.id)
         let result=try task(templateID:selected.templateID); guard result.status == .running else { throw persistence() }
@@ -75,8 +76,15 @@ struct TimerCommandHandler {
     }
 
     private func pause() async throws -> PeekerEnvelope {
-        guard let active=store.runningTask else { throw PeekerError(code:"timer_no_active_task",message:"No active task") }
-        try await store.pause(); return .success(taskJSON(try task(templateID:active.templateID)))
+        if let active=store.runningTask {
+            try await store.pause(); return .success(taskJSON(try task(templateID:active.templateID)))
+        }
+        if let active=store.runningTemporaryTask {
+            try await store.pause()
+            guard let value=store.dayState?.temporaryTasks.first(where:{$0.id==active.id}) else { throw notFound() }
+            return .success(temporaryJSON(value))
+        }
+        throw PeekerError(code:"timer_no_active_task",message:"No active task")
     }
 
     private func move(_ args:[String]) async throws -> PeekerEnvelope {
@@ -90,6 +98,57 @@ struct TimerCommandHandler {
         return .success(taskJSON(try task(templateID:selected.id)))
     }
 
+    private func temporary(_ args:[String]) async throws -> PeekerEnvelope {
+        guard let command=args.first else { throw usage("temporary command required") }
+        let tail=Array(args.dropFirst())
+        switch command {
+        case "list":
+            guard tail.isEmpty else { throw usage("temporary list accepts no arguments") }
+            return .success(.object([
+                "temporaryTasks":.array((store.dayState?.activeTemporaryTasks ?? []).map(temporaryJSON)),
+                "activeSession":store.dayState?.activeSession.map(activeSessionJSON) ?? .null
+            ]))
+        case "get":
+            return .success(temporaryJSON(try temporaryTask(for:try Selector(tail))))
+        case "create":
+            let options=try TimerOptions(tail)
+            let task=try await store.createTemporaryTask(
+                name:try options.required("--name"),
+                targetSeconds:try parseDuration(options.required("--target")),
+                colorHex:try presetColor(options.required("--color")),
+                expireOnRefresh:try options.value("--expire-on-refresh").map(bool) ?? false
+            )
+            return .success(temporaryJSON(task))
+        case "update":
+            let selector=try Selector(tail); let options=try TimerOptions(selector.remaining)
+            let existing=try temporaryTask(for:selector)
+            guard options.value("--name") != nil || options.value("--target") != nil || options.value("--color") != nil || options.value("--expire-on-refresh") != nil else {
+                throw usage("temporary update requires a changed field")
+            }
+            let updated=try await store.updateTemporaryTask(
+                id:existing.id,
+                name:options.value("--name") ?? existing.name,
+                targetSeconds:try options.value("--target").map(parseDuration) ?? existing.targetSeconds,
+                colorHex:try options.value("--color").map(presetColor) ?? existing.colorHex,
+                expireOnRefresh:try options.value("--expire-on-refresh").map(bool) ?? existing.expireOnRefresh
+            )
+            guard updated != existing else { throw usage("temporary update does not change the task") }
+            return .success(temporaryJSON(updated))
+        case "delete":
+            let selected=try temporaryTask(for:try Selector(tail))
+            let deleted=try await store.deleteTemporaryTask(id:selected.id)
+            var object=temporaryObject(deleted)
+            object["archived"] = .bool(true); object["archiveReason"] = .string("deleted")
+            return .success(.object(object))
+        case "start":
+            let selected=try temporaryTask(for:try Selector(tail))
+            try await store.startTemporaryTask(id:selected.id)
+            guard let started=store.dayState?.temporaryTasks.first(where:{$0.id==selected.id}) else { throw persistence() }
+            return .success(temporaryJSON(started))
+        default: throw usage("Unknown temporary command")
+        }
+    }
+
     private func config(_ args:[String]) async throws -> PeekerEnvelope {
         guard let command=args.first else { throw usage("config get|set required") }
         if command=="get" { return .success(configJSON()) }
@@ -101,6 +160,7 @@ struct TimerCommandHandler {
             enabledState.enabled=enabled; any=true
         }
         if let raw=options.value("--refresh-time") { await store.updateRefreshTime(try refresh(raw)); any=true }
+        if let raw=options.value("--temporary-tasks-enabled") { store.setTemporaryTasksEnabled(try bool(raw)); any=true }
         guard any else { throw usage("config set requires a value") }
         return .success(configJSON())
     }
@@ -109,21 +169,65 @@ struct TimerCommandHandler {
         guard let state=store.dayState else { return .object(["tasks":.array([])]) }
         return .object([
             "businessDay":.object(["start":.string(iso(state.businessDay.start)),"end":.string(iso(state.businessDay.end))]),
-            "activeTemplateId":state.activeSession.flatMap { session in state.tasks.first(where:{$0.id==session.taskID})?.templateID }.map{.string($0.uuidString)} ?? .null,
-            "activeSession":state.activeSession.map { session in .object(["sessionId":.string(session.id.uuidString),"instanceId":.string(session.taskID.uuidString),"startedAt":.string(iso(Date(millisecondsSince1970:session.startedAtMilliseconds)))]) } ?? .null,
+            "activeTemplateId":state.activeSession.flatMap { session in session.taskKind == .daily ? state.tasks.first(where:{$0.id==session.taskID})?.templateID : nil }.map{.string($0.uuidString)} ?? .null,
+            "activeSession":state.activeSession.map(activeSessionJSON) ?? .null,
             "tasks":.array(state.tasks.filter(\.isVisible).sorted{$0.position<$1.position}.map(taskJSON))
         ])
+    }
+
+    private func activeSessionJSON(_ session:TimerSession)->JSONValue {
+        var object:[String:JSONValue] = [
+            "sessionId":.string(session.id.uuidString),"kind":.string(session.taskKind.rawValue),
+            "startedAt":.string(iso(Date(millisecondsSince1970:session.startedAtMilliseconds)))
+        ]
+        if session.taskKind == .daily {
+            object["instanceId"] = .string(session.taskID.uuidString)
+            if let templateID=store.dayState?.tasks.first(where:{$0.id==session.taskID})?.templateID {
+                object["templateId"] = .string(templateID.uuidString)
+            }
+        } else { object["temporaryTaskId"] = .string(session.taskID.uuidString) }
+        return .object(object)
+    }
+
+    private func temporaryTask(for selector:Selector)throws->TimerTemporaryTask {
+        let values=store.dayState?.activeTemporaryTasks ?? []
+        switch selector.kind {
+        case let .id(id): guard let value=values.first(where:{$0.id==id}) else{throw notFound()};return value
+        case let .name(name):
+            let matches=values.filter{$0.name==name}
+            guard matches.count==1 else {
+                if matches.isEmpty{throw notFound()}
+                throw PeekerError(code:"ambiguous_selector",message:"Name is ambiguous",details:["candidateIds":.array(matches.map{.string($0.id.uuidString)})])
+            }
+            return matches[0]
+        }
+    }
+
+    private func temporaryJSON(_ task:TimerTemporaryTask)->JSONValue { .object(temporaryObject(task)) }
+    private func temporaryObject(_ task:TimerTemporaryTask)->[String:JSONValue] {
+        let remaining=store.remainingSeconds(for:task,at:Date())
+        let accumulated=min(task.targetSeconds,task.targetSeconds-remaining)
+        return [
+            "temporaryTaskId":.string(task.id.uuidString),"kind":.string("temporary"),"name":.string(task.name),
+            "targetSeconds":.number(Double(task.targetSeconds)),"accumulatedSeconds":.number(Double(accumulated)),
+            "remainingSeconds":.number(Double(remaining)),"status":.string(task.status.rawValue),"color":.string(task.colorHex),
+            "expireOnRefresh":.bool(task.expireOnRefresh),
+            "createdAt":.string(iso(Date(millisecondsSince1970:task.createdAtMilliseconds))),
+            "updatedAt":.string(iso(Date(millisecondsSince1970:task.updatedAtMilliseconds))),
+            "archivedAt":task.archivedAtMilliseconds.map{.string(iso(Date(millisecondsSince1970:$0)))} ?? .null,
+            "archiveReason":task.archiveReason.map{.string($0.rawValue)} ?? .null
+        ]
     }
 
     private func taskJSON(_ task:TimerTaskInstance)->JSONValue { .object(taskObject(task)) }
     private func taskObject(_ task:TimerTaskInstance)->[String:JSONValue] {
         let accumulated=min(task.targetSeconds,task.targetSeconds-store.remainingSeconds(for:task,at:Date()))
-        return ["templateId":.string(task.templateID.uuidString),"instanceId":.string(task.id.uuidString),"name":.string(task.name),
+        return ["templateId":.string(task.templateID.uuidString),"instanceId":.string(task.id.uuidString),"kind":.string("daily"),"name":.string(task.name),
                 "targetSeconds":.number(Double(task.targetSeconds)),"accumulatedSeconds":.number(Double(accumulated)),
                 "remainingSeconds":.number(Double(max(0,task.targetSeconds-accumulated))),"status":.string(task.status.rawValue),
                 "color":.string(task.colorHex),"position":.number(Double(task.position))]
     }
-    private func configJSON()->JSONValue { .object(["enabled":.bool(enabledState.enabled),"refreshTime":.string(String(format:"%02d:%02d",store.refreshTime.hour,store.refreshTime.minute))]) }
+    private func configJSON()->JSONValue { .object(["enabled":.bool(enabledState.enabled),"refreshTime":.string(String(format:"%02d:%02d",store.refreshTime.hour,store.refreshTime.minute)),"temporaryTasksEnabled":.bool(store.temporaryTasksEnabled)]) }
 
     private func template(for selector:Selector)throws->TimerTemplate {
         switch selector.kind {
@@ -135,10 +239,11 @@ struct TimerCommandHandler {
     private func task(templateID:UUID)throws->TimerTaskInstance { guard let task=store.dayState?.tasks.first(where:{$0.templateID==templateID && $0.isVisible}) else{throw notFound()};return task }
     private func parseDuration(_ raw:String)throws->Int64 { let regex=try NSRegularExpression(pattern:"^(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$"); let range=NSRange(raw.startIndex...,in:raw); guard let match=regex.firstMatch(in:raw,range:range),match.range==range else{throw PeekerError(code:"timer_invalid_duration",message:"Invalid duration")}; func n(_ i:Int)->Int64{let r=match.range(at:i);guard r.location != NSNotFound,let sr=Range(r,in:raw)else{return 0};return Int64(raw[sr]) ?? 0}; let value=n(1)*3600+n(2)*60+n(3);guard (1...86_399).contains(value)else{throw PeekerError(code:"timer_invalid_duration",message:"Duration out of range")};return value }
     private func color(_ raw:String)throws->String { guard raw.range(of:"^#[0-9A-Fa-f]{6}$",options:.regularExpression) != nil else{throw PeekerError(code:"timer_invalid_color",message:"Invalid color")};return raw.uppercased() }
+    private func presetColor(_ raw:String)throws->String { let value=raw.uppercased(); guard PeekerPresetColor(rawValue:value) != nil else{throw PeekerError(code:"timer_invalid_preset_color",message:"Invalid preset color")};return value }
     private func refresh(_ raw:String)throws->RefreshTime { let parts=raw.split(separator:":").compactMap{Int($0)};guard parts.count==2 else{throw usage("Invalid refresh time")};return try RefreshTime(hour:parts[0],minute:parts[1]) }
     private func bool(_ raw:String)throws->Bool{if raw=="true"{return true};if raw=="false"{return false};throw usage("Expected true or false")}
     private func iso(_ date:Date)->String{ISO8601DateFormatter().string(from:date)}
-    private func map(_ error:TimerDomainError)->PeekerError{switch error{case .blankName:return PeekerError(code:"validation_error",message:"Name is required");case .targetOutOfRange:return PeekerError(code:"timer_invalid_duration",message:"Invalid duration");case .taskNotFound:return notFound();case .anotherTaskIsRunning:return PeekerError(code:"timer_already_running",message:"Another task is running");case .taskCompleted:return PeekerError(code:"timer_task_completed",message:"Task is completed");case .noActiveSession:return PeekerError(code:"timer_no_active_task",message:"No active task")}}
+    private func map(_ error:TimerDomainError)->PeekerError{switch error{case .blankName:return PeekerError(code:"validation_error",message:"Name is required");case .targetOutOfRange:return PeekerError(code:"timer_invalid_duration",message:"Invalid duration");case .taskNotFound:return notFound();case .anotherTaskIsRunning:return PeekerError(code:"timer_already_running",message:"Another task is running");case .taskCompleted:return PeekerError(code:"timer_task_completed",message:"Task is completed");case .noActiveSession:return PeekerError(code:"timer_no_active_task",message:"No active task");case .invalidPresetColor:return PeekerError(code:"timer_invalid_preset_color",message:"Invalid preset color");case .temporaryCreationDisabled:return PeekerError(code:"timer_temporary_creation_disabled",message:"Temporary task creation is disabled")}}
     private func usage(_ message:String)->PeekerError{PeekerError(code:"invalid_usage",message:message)}
     private func notFound()->PeekerError{PeekerError(code:"not_found",message:"Timer task not found")}
     private func persistence()->PeekerError{PeekerError(code:"persistence_error",message:store.errorMessage ?? "Timer mutation failed")}

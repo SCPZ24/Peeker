@@ -13,7 +13,7 @@ public enum FunctionCardPromptStyle: String, Equatable, Sendable {
 public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
     public let token: String
     public let sourceID: FeatureID
-    public let systemImage: String
+    public let iconDescriptor: FunctionCardIconDescriptor
     public let moduleName: String
     public let summary: String
     public let style: FunctionCardPromptStyle
@@ -24,7 +24,7 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
     public init(
         token: String,
         sourceID: FeatureID,
-        systemImage: String,
+        iconDescriptor: FunctionCardIconDescriptor,
         moduleName: String,
         summary: String,
         style: FunctionCardPromptStyle = .standard,
@@ -32,11 +32,36 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
     ) {
         self.token = token
         self.sourceID = sourceID
-        self.systemImage = systemImage
+        self.iconDescriptor = iconDescriptor
         self.moduleName = moduleName
         self.summary = summary
         self.style = style
         self.occurredAt = occurredAt
+    }
+
+    public init(
+        token: String,
+        sourceID: FeatureID,
+        systemImage: String,
+        moduleName: String,
+        summary: String,
+        style: FunctionCardPromptStyle = .standard,
+        occurredAt: Date = Date()
+    ) {
+        self.init(
+            token: token,
+            sourceID: sourceID,
+            iconDescriptor: .systemSymbol(name: systemImage),
+            moduleName: moduleName,
+            summary: summary,
+            style: style,
+            occurredAt: occurredAt
+        )
+    }
+
+    public var systemImage: String {
+        guard case let .systemSymbol(name) = iconDescriptor else { return "square" }
+        return name
     }
 }
 

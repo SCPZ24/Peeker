@@ -1,6 +1,6 @@
 # Peeker v2.1 Architecture
 
-> 文档状态：v2.0.2 当前实现与 v2.1.0 目标架构契约。
+> 文档状态：v2.1.0 当前实现架构契约。
 >
 > 产品行为分别以 [v2 PRD](PRD.md) 和各 [功能文档](../functions/) 为准。
 
@@ -89,6 +89,7 @@ bundleSVG(featureID, manifestResourceName)
 - Targetor 使用 Targetor Bundle manifest 中的 Lucide `target`。
 - 标签栏、设置侧栏、功能卡列表和 Prompt glyph 统一渲染描述符。
 - Bundle SVG 只能来自模块注册的 manifest canonical name；不得接受路径、网络 URL 或任意 SVG 内容。
+- SVG 运行时通过公开 `NSImage`/SwiftUI API 按需渲染；不得链接或调用私有 CoreSVG。`sips` 只用于发布验证。
 - 保留 system symbol convenience initializer，避免现有卡迁移产生行为变化。
 
 ### 4.3 动态展开尺寸
@@ -208,10 +209,12 @@ Migration `targetor-schema-v1` 只追加：
 
 Targetor Store 负责：
 
-- 计算和恢复日/周/月周期；
+- 计算和恢复日/周/月周期；同一 Targetor 日内多个周期相交时，日历选择 `start` 最晚的周期；
 - 串行 CRUD、设置排序、打卡、撤销和边界；
 - 构造当前状态、9 列汇总和悬停日历；
 - 提交后发布庆祝反馈和 Prompt。
+
+Targetor CLI 周期状态 wire value 固定为 `notStarted | started | progressing | completed`。汇总日历使用系统蓝语义色的四档非空明度；周周期按橙、黄、绿、蓝、青的 `sequence % 5` 稳定色相循环，并以明度表达完成级别。
 
 ## 10. Lucide Bundle 资源
 

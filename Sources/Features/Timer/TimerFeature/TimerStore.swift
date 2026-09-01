@@ -18,14 +18,17 @@ public final class TimerStore {
     public private(set) var errorMessage: String?
     public var refreshTime: RefreshTime
     public var statisticsMode: TimerStatisticsMode
+    public var temporaryTasksEnabled: Bool
 
     @ObservationIgnored private let repository: any TimerRepository
     @ObservationIgnored private let clock: any Clock
     @ObservationIgnored private let resolver: BusinessDayResolver
     @ObservationIgnored private let eventHub: TemporalEventHub
     @ObservationIgnored private let onNaturalCompletion: @MainActor (TimerTaskInstance) -> Void
+    @ObservationIgnored private let onTemporaryNaturalCompletion: @MainActor (TimerTemporaryTask) -> Void
     @ObservationIgnored private let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     @ObservationIgnored private let onStatisticsModeChanged: @MainActor (TimerStatisticsMode) -> Void
+    @ObservationIgnored private let onTemporaryTasksEnabledChanged: @MainActor (Bool) -> Void
     @ObservationIgnored private var loadedSnapshotInterval: DateInterval?
     @ObservationIgnored private var snapshotCache: [BusinessDayID: TimerDailySnapshot] = [:]
     @ObservationIgnored private var snapshotLoadGeneration = 0
@@ -40,20 +43,26 @@ public final class TimerStore {
         resolver: BusinessDayResolver,
         eventHub: TemporalEventHub,
         onNaturalCompletion: @escaping @MainActor (TimerTaskInstance) -> Void = { _ in },
+        onTemporaryNaturalCompletion: @escaping @MainActor (TimerTemporaryTask) -> Void = { _ in },
         refreshTime: RefreshTime = .midnight,
         statisticsMode: TimerStatisticsMode = .progress,
+        temporaryTasksEnabled: Bool = false,
         onRefreshTimeChanged: @escaping @MainActor (RefreshTime) -> Void = { _ in },
-        onStatisticsModeChanged: @escaping @MainActor (TimerStatisticsMode) -> Void = { _ in }
+        onStatisticsModeChanged: @escaping @MainActor (TimerStatisticsMode) -> Void = { _ in },
+        onTemporaryTasksEnabledChanged: @escaping @MainActor (Bool) -> Void = { _ in }
     ) {
         self.repository = repository
         self.clock = clock
         self.resolver = resolver
         self.eventHub = eventHub
         self.onNaturalCompletion = onNaturalCompletion
+        self.onTemporaryNaturalCompletion = onTemporaryNaturalCompletion
         self.refreshTime = refreshTime
         self.statisticsMode = statisticsMode
+        self.temporaryTasksEnabled = temporaryTasksEnabled
         self.onRefreshTimeChanged = onRefreshTimeChanged
         self.onStatisticsModeChanged = onStatisticsModeChanged
+        self.onTemporaryTasksEnabledChanged = onTemporaryTasksEnabledChanged
     }
 
     public func load() async {
@@ -212,6 +221,120 @@ public final class TimerStore {
         }
     }
 
+    public func setTemporaryTasksEnabled(_ enabled: Bool) {
+        temporaryTasksEnabled = enabled
+        onTemporaryTasksEnabledChanged(enabled)
+    }
+
+    @discardableResult
+    public func createTemporaryTask(
+        name: String,
+        targetSeconds: Int64,
+        colorHex: String,
+        expireOnRefresh: Bool
+    ) async throws -> TimerTemporaryTask {
+        try await withMutation {
+            guard temporaryTasksEnabled else { throw TimerDomainError.temporaryCreationDisabled }
+            try await prepareCurrentDayForMutation()
+            let now = clock.now().millisecondsSince1970
+            let task = try TimerTemporaryTask(
+                name: name, targetSeconds: targetSeconds, colorHex: colorHex,
+                expireOnRefresh: expireOnRefresh,
+                createdAtMilliseconds: now, updatedAtMilliseconds: now
+            )
+            try await repository.saveTemporaryTask(task)
+            dayState?.temporaryTasks.append(task)
+            errorMessage = nil
+            return task
+        }
+    }
+
+    @discardableResult
+    public func updateTemporaryTask(
+        id: UUID,
+        name: String,
+        targetSeconds: Int64,
+        colorHex: String,
+        expireOnRefresh: Bool
+    ) async throws -> TimerTemporaryTask {
+        try await withMutation {
+            try await prepareCurrentDayForMutation()
+            guard var state = dayState,
+                  var existing = state.temporaryTasks.first(where: { $0.id == id })
+            else { throw TimerDomainError.taskNotFound }
+            if state.activeSession?.identity == .temporary(taskID: id) {
+                let dynamic = existing.accumulatedSeconds
+                    + max(0, clock.now().millisecondsSince1970 - state.activeSession!.startedAtMilliseconds) / 1_000
+                if targetSeconds <= dynamic { try await pauseUnlocked(reason: .paused) }
+                guard let refreshed = dayState?.temporaryTasks.first(where: { $0.id == id }) else {
+                    throw TimerDomainError.taskNotFound
+                }
+                existing = refreshed
+                state = dayState!
+            }
+            let now = clock.now().millisecondsSince1970
+            let nextStatus: TimerTaskStatus = existing.status == .completed && targetSeconds > existing.accumulatedSeconds
+                ? .paused : existing.status
+            let updated = try TimerTemporaryTask(
+                id: existing.id, name: name, targetSeconds: targetSeconds, colorHex: colorHex,
+                accumulatedSeconds: existing.accumulatedSeconds, status: nextStatus,
+                expireOnRefresh: expireOnRefresh,
+                createdAtMilliseconds: existing.createdAtMilliseconds,
+                updatedAtMilliseconds: now
+            )
+            try await repository.saveTemporaryTask(updated)
+            state.updateTemporaryTask(updated)
+            dayState = state
+            await scheduleEvents()
+            errorMessage = nil
+            return updated
+        }
+    }
+
+    @discardableResult
+    public func deleteTemporaryTask(id: UUID) async throws -> TimerTemporaryTask {
+        try await withMutation {
+            try await prepareCurrentDayForMutation()
+            guard var state = dayState,
+                  var task = state.temporaryTasks.first(where: { $0.id == id })
+            else { throw TimerDomainError.taskNotFound }
+            var completion: TimerSessionCompletion?
+            if state.activeSession?.identity == .temporary(taskID: id) {
+                completion = try state.pause(
+                    atMilliseconds: clock.now().millisecondsSince1970,
+                    reason: .taskDeleted
+                )
+                task = state.temporaryTasks.first(where: { $0.id == id })!
+            }
+            let now = clock.now().millisecondsSince1970
+            try await repository.archiveTemporaryTask(
+                task, completion: completion, reason: .deleted, atMilliseconds: now
+            )
+            task.archivedAtMilliseconds = now
+            task.archiveReason = .deleted
+            state.temporaryTasks.removeAll { $0.id == id }
+            dayState = state
+            await scheduleEvents()
+            errorMessage = nil
+            return task
+        }
+    }
+
+    public func startTemporaryTask(id: UUID) async throws {
+        try await withMutation {
+            try await prepareCurrentDayForMutation()
+            guard var state = dayState else { throw TimerDomainError.taskNotFound }
+            try state.start(identity: .temporary(taskID: id), atMilliseconds: clock.now().millisecondsSince1970)
+            guard let session = state.activeSession,
+                  let task = state.temporaryTasks.first(where: { $0.id == id })
+            else { throw TimerDomainError.taskNotFound }
+            try await repository.commitTemporaryStart(state: state, task: task, session: session)
+            dayState = state
+            errorMessage = nil
+            await scheduleEvents()
+        }
+    }
+
     public func start(taskID: UUID) async {
         await withMutation { await startUnlocked(taskID: taskID) }
     }
@@ -243,7 +366,14 @@ public final class TimerStore {
                 atMilliseconds: clock.now().millisecondsSince1970,
                 reason: reason
             ) else { return }
-            try await repository.commitCompletion(state: state, completion: completion)
+            if completion.session.taskKind == .temporary,
+               let task = state.temporaryTasks.first(where: { $0.id == completion.session.taskID }) {
+                try await repository.commitTemporaryCompletion(
+                    state: state, task: task, completion: completion
+                )
+            } else {
+                try await repository.commitCompletion(state: state, completion: completion)
+            }
             dayState = state
             errorMessage = nil
             await scheduleEvents()
@@ -254,9 +384,16 @@ public final class TimerStore {
     }
 
     public var runningTask: TimerTaskInstance? {
-        guard let session = dayState?.activeSession else { return nil }
+        guard let session = dayState?.activeSession, session.taskKind == .daily else { return nil }
         return dayState?.tasks.first { $0.id == session.taskID && $0.status == .running }
     }
+
+    public var runningTemporaryTask: TimerTemporaryTask? {
+        guard let session = dayState?.activeSession, session.taskKind == .temporary else { return nil }
+        return dayState?.temporaryTasks.first { $0.id == session.taskID && $0.status == .running }
+    }
+
+    public var hasRunningTask: Bool { dayState?.activeSession != nil }
 
     public func remainingSeconds(for task: TimerTaskInstance, at date: Date = Date()) -> Int64 {
         guard task.status == .running,
@@ -264,6 +401,15 @@ public final class TimerStore {
               session.taskID == task.id else {
             return task.remainingSeconds
         }
+        let elapsed = max(0, date.millisecondsSince1970 - session.startedAtMilliseconds) / 1_000
+        return max(0, task.targetSeconds - task.accumulatedSeconds - elapsed)
+    }
+
+    public func remainingSeconds(for task: TimerTemporaryTask, at date: Date = Date()) -> Int64 {
+        guard task.status == .running,
+              let session = dayState?.activeSession,
+              session.taskKind == .temporary,
+              session.taskID == task.id else { return task.remainingSeconds }
         let elapsed = max(0, date.millisecondsSince1970 - session.startedAtMilliseconds) / 1_000
         return max(0, task.targetSeconds - task.accumulatedSeconds - elapsed)
     }
@@ -285,6 +431,7 @@ public final class TimerStore {
                 dayState = TimerDayState(
                     businessDay: adjusted,
                     tasks: current.tasks,
+                    temporaryTasks: current.temporaryTasks,
                     activeSession: current.activeSession
                 )
             }
@@ -336,23 +483,45 @@ public final class TimerStore {
         while state.businessDay.end.millisecondsSince1970 <= nowMilliseconds {
             let boundary = state.businessDay.end.millisecondsSince1970
             var continuingTemplateID: UUID?
+            var continuingTemporaryTaskID: UUID?
             var completion: TimerSessionCompletion?
-            var completedTask: TimerTaskInstance?
-            var shouldPromptAfterCommit = false
-            if let session = state.activeSession,
-               let task = state.tasks.first(where: { $0.id == session.taskID }) {
-                let target = session.startedAtMilliseconds + task.remainingSeconds * 1_000
+            var completedDaily: TimerTaskInstance?
+            var completedTemporary: TimerTemporaryTask?
+            var completionTarget: Int64?
+
+            if let session = state.activeSession {
+                let remaining: Int64
+                switch session.identity {
+                case let .daily(taskID):
+                    guard let task = state.tasks.first(where: { $0.id == taskID }) else {
+                        throw TimerDomainError.taskNotFound
+                    }
+                    remaining = task.remainingSeconds
+                case let .temporary(taskID):
+                    guard let task = state.temporaryTasks.first(where: { $0.id == taskID }) else {
+                        throw TimerDomainError.taskNotFound
+                    }
+                    remaining = task.remainingSeconds
+                }
+                let target = session.startedAtMilliseconds + remaining * 1_000
                 if target <= boundary {
                     completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
-                    completedTask = state.tasks.first(where: { $0.id == task.id })
-                    shouldPromptAfterCommit = shouldPublishCompletionPrompt(
-                        targetMilliseconds: target,
-                        nowMilliseconds: nowMilliseconds,
-                        allowPrompt: allowPrompt
-                    )
+                    completionTarget = target
+                    if session.taskKind == .daily {
+                        completedDaily = state.tasks.first(where: { $0.id == session.taskID })
+                    } else {
+                        completedTemporary = state.temporaryTasks.first(where: { $0.id == session.taskID })
+                    }
                 } else {
-                    continuingTemplateID = task.templateID
-                    completion = try state.pause(atMilliseconds: boundary, reason: .businessDayBoundary)!
+                    if session.taskKind == .daily {
+                        continuingTemplateID = state.tasks.first(where: { $0.id == session.taskID })?.templateID
+                    } else if let task = state.temporaryTasks.first(where: { $0.id == session.taskID }),
+                              !task.expireOnRefresh {
+                        continuingTemporaryTaskID = task.id
+                    }
+                    completion = try state.pause(
+                        atMilliseconds: boundary, reason: .businessDayBoundary
+                    )!
                 }
             }
 
@@ -373,26 +542,55 @@ public final class TimerStore {
                     snapshot: snapshot,
                     nextDay: nextDay,
                     continuingTemplateID: continuingTemplateID,
+                    continuingTemporaryTaskID: continuingTemporaryTaskID,
                     boundaryMilliseconds: boundary
                 )
             )
             dayState = state
             cache(snapshot)
-            if shouldPromptAfterCommit, let completedTask { onNaturalCompletion(completedTask) }
-        }
-
-        if let session = state.activeSession,
-           let task = state.tasks.first(where: { $0.id == session.taskID }) {
-            let target = session.startedAtMilliseconds + task.remainingSeconds * 1_000
-            if target <= nowMilliseconds {
-                let completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
-                try await repository.commitCompletion(state: state, completion: completion)
-                if shouldPublishCompletionPrompt(
-                    targetMilliseconds: target,
+            if let completionTarget,
+               shouldPublishCompletionPrompt(
+                    targetMilliseconds: completionTarget,
                     nowMilliseconds: nowMilliseconds,
                     allowPrompt: allowPrompt
-                ), let completedTask = state.tasks.first(where: { $0.id == task.id }) {
-                    onNaturalCompletion(completedTask)
+               ) {
+                if let completedDaily { onNaturalCompletion(completedDaily) }
+                if let completedTemporary { onTemporaryNaturalCompletion(completedTemporary) }
+            }
+        }
+
+        if let session = state.activeSession {
+            let remaining: Int64
+            switch session.identity {
+            case let .daily(taskID):
+                guard let task = state.tasks.first(where: { $0.id == taskID }) else {
+                    throw TimerDomainError.taskNotFound
+                }
+                remaining = task.remainingSeconds
+            case let .temporary(taskID):
+                guard let task = state.temporaryTasks.first(where: { $0.id == taskID }) else {
+                    throw TimerDomainError.taskNotFound
+                }
+                remaining = task.remainingSeconds
+            }
+            let target = session.startedAtMilliseconds + remaining * 1_000
+            if target <= nowMilliseconds {
+                let completion = try state.pause(atMilliseconds: target, reason: .targetReached)!
+                if session.taskKind == .temporary,
+                   let task = state.temporaryTasks.first(where: { $0.id == session.taskID }) {
+                    try await repository.commitTemporaryCompletion(
+                        state: state, task: task, completion: completion
+                    )
+                    if shouldPublishCompletionPrompt(
+                        targetMilliseconds: target, nowMilliseconds: nowMilliseconds, allowPrompt: allowPrompt
+                    ) { onTemporaryNaturalCompletion(task) }
+                } else {
+                    try await repository.commitCompletion(state: state, completion: completion)
+                    if shouldPublishCompletionPrompt(
+                        targetMilliseconds: target, nowMilliseconds: nowMilliseconds, allowPrompt: allowPrompt
+                    ), let task = state.tasks.first(where: { $0.id == session.taskID }) {
+                        onNaturalCompletion(task)
+                    }
                 }
             }
         }
@@ -478,14 +676,18 @@ public final class TimerStore {
         }
 
         let targetDate: Date?
-        if let session = state.activeSession,
-           let task = state.tasks.first(where: { $0.id == session.taskID }) {
-            targetDate = Date(
-                millisecondsSince1970: session.startedAtMilliseconds + task.remainingSeconds * 1_000
-            )
-        } else {
-            targetDate = nil
-        }
+        if let session = state.activeSession {
+            let remaining: Int64?
+            switch session.identity {
+            case let .daily(taskID):
+                remaining = state.tasks.first(where: { $0.id == taskID })?.remainingSeconds
+            case let .temporary(taskID):
+                remaining = state.temporaryTasks.first(where: { $0.id == taskID })?.remainingSeconds
+            }
+            targetDate = remaining.map {
+                Date(millisecondsSince1970: session.startedAtMilliseconds + $0 * 1_000)
+            }
+        } else { targetDate = nil }
         await eventHub.set(targetKey, at: targetDate, priority: 0) { [weak self] reason in
             await self?.handleTemporalEvent(reason: reason)
         }

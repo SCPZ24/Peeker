@@ -10,7 +10,7 @@
 
 完全使用 Swift 实现的 macOS 原生效率工具。
 
-> 当前公开版本为 **v2.0.2**：新增 Agentor，聚合 Claude Code、OpenCode、Hermes、Pi 和 Codex 的运行状态，并延续静息岛、Timer、Scheduler 与 `peeker` CLI。下方截图是 v1 历史截图。
+> 当前版本为 **v2.1.0**：提供 Timer 每日/临时任务、Pusher、Scheduler、Agentor 与 Targetor 五张功能卡，并通过 `peeker` CLI 管理 Timer、Pusher、Scheduler 和 Targetor。下方截图仍是 v1 历史截图。
 
 ## 运行效果（v1）
 
@@ -37,6 +37,8 @@ Cask 会安装 App，并将内置 CLI 暴露为 `peeker`：
 ```bash
 peeker --version
 peeker status
+peeker timer temporary list
+peeker targetor list
 ```
 
 除 `--version` 和 `status` 外，CLI 命令要求 App 已运行；CLI 不会启动 App 或直接打开 SQLite。首次启动后，请前往“系统设置 → 隐私与安全”，选择信任 Peeker。

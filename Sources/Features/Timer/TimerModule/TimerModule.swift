@@ -32,6 +32,10 @@ public struct TimerModule: FunctionCardModule {
         }
 
         let preferences = TimerModulePreferences(store: context.preferences)
+        let layoutState = FunctionCardLayoutState(currentExpandedSize: CGSize(
+            width: 800,
+            height: preferences.temporaryTasksEnabled ? 520 * 5 / 7 : 460 * 5 / 7
+        ))
         let dependencies = TimerFeatureDependencies(
                 repository: repository,
                 clock: context.clock,
@@ -42,13 +46,24 @@ public struct TimerModule: FunctionCardModule {
                 statisticsMode: TimerStatisticsMode(
                     rawValue: preferences.statisticsModeRawValue
                 ) ?? .progress,
+            temporaryTasksEnabled: preferences.temporaryTasksEnabled,
+            layoutState: layoutState,
+            setPopoverPresented: context.hostActions.setPopoverPresented,
+            setEditingText: context.hostActions.setEditingText,
             onRefreshTimeChanged: { preferences.saveRefreshTime($0) },
-            onStatisticsModeChanged: { preferences.statisticsModeRawValue = $0.rawValue }
+            onStatisticsModeChanged: { preferences.statisticsModeRawValue = $0.rawValue },
+            onTemporaryTasksEnabledChanged: { enabled in
+                preferences.temporaryTasksEnabled = enabled
+                layoutState.currentExpandedSize = CGSize(
+                    width: 800,
+                    height: enabled ? 520 * 5 / 7 : 460 * 5 / 7
+                )
+            }
         )
         let store = TimerFeatureFactory.makeStore(dependencies: dependencies)
         let enabledState = ModuleEnablementState()
         return FunctionCardRuntimeRegistration(
-            card: TimerFeatureFactory.makeRegistration(store: store),
+            card: TimerFeatureFactory.makeRegistration(store: store, dependencies: dependencies),
             handleCommand: { invocation in
                 await TimerCommandHandler(
                     store: store,
@@ -68,6 +83,7 @@ final class TimerModulePreferences {
         static let refreshHour = "timerRefreshHour"
         static let refreshMinute = "timerRefreshMinute"
         static let statisticsMode = "timerStatisticsMode"
+        static let temporaryTasksEnabled = "timerTemporaryTasksEnabled"
     }
 
     private let store: FeaturePreferenceStore
@@ -78,6 +94,7 @@ final class TimerModulePreferences {
             Key.refreshHour: 0,
             Key.refreshMinute: 0,
             Key.statisticsMode: "progress",
+            Key.temporaryTasksEnabled: false,
         ])
     }
 
@@ -96,6 +113,11 @@ final class TimerModulePreferences {
     var statisticsModeRawValue: String {
         get { store.string(forKey: Key.statisticsMode) ?? "progress" }
         set { store.set(newValue, forKey: Key.statisticsMode) }
+    }
+
+    var temporaryTasksEnabled: Bool {
+        get { store.bool(forKey: Key.temporaryTasksEnabled) }
+        set { store.set(newValue, forKey: Key.temporaryTasksEnabled) }
     }
 }
 

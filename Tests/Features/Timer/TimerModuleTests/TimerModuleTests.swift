@@ -11,7 +11,7 @@ final class TimerModuleTests: XCTestCase {
         let module = TimerModule()
 
         XCTAssertEqual(module.id, FeatureID(rawValue: "timer"))
-        XCTAssertEqual(module.databaseMigrations.map(\.id), ["timer-schema-v1"])
+        XCTAssertEqual(module.databaseMigrations.map(\.id), ["timer-schema-v1", "timer-temporary-schema-v1"])
     }
 
     func testPreferencesReadAndWritePublishedLegacyKeys() throws {

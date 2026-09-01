@@ -17,10 +17,11 @@ struct SettingsRootView: View {
                     ),
                     id: \.self
                 ) { destination in
-                    Label(
-                        title(for: destination),
-                        systemImage: systemImage(for: destination)
-                    )
+                    HStack(spacing: 8) {
+                        destinationIcon(destination)
+                            .frame(width: 16, height: 16)
+                        Text(title(for: destination))
+                    }
                     .tag(destination)
                 }
             }
@@ -71,13 +72,25 @@ struct SettingsRootView: View {
         }
     }
 
-    private func systemImage(for destination: SettingsDestination) -> String {
+    @ViewBuilder
+    private func destinationIcon(_ destination: SettingsDestination) -> some View {
         switch destination {
-        case .general: "gearshape"
-        case .cards: "square.grid.2x2"
+        case .general:
+            Image(systemName: "gearshape")
+        case .cards:
+            Image(systemName: "square.grid.2x2")
         case let .feature(id):
-            runtime.registry.registrations.first(where: { $0.id == id })?.settingsSystemImage ?? "square"
-        case .about: "info.circle"
+            if let card = runtime.registry.registrations.first(where: { $0.id == id }) {
+                FunctionCardIconView(
+                    descriptor: card.settingsIconDescriptor,
+                    manifest: card.iconManifest,
+                    accessibilityLabel: card.name
+                )
+            } else {
+                Image(systemName: "square")
+            }
+        case .about:
+            Image(systemName: "info.circle")
         }
     }
 }
@@ -194,7 +207,8 @@ private struct CardSettingsView: View {
                     ForEach(registry.enabledCards) { card in
                         CardSettingsRow(
                             name: card.name,
-                            systemImage: card.systemImage,
+                            iconDescriptor: card.iconDescriptor,
+                            iconManifest: card.iconManifest,
                             isEnabled: enabledBinding(card.id)
                         )
                     }
@@ -203,7 +217,8 @@ private struct CardSettingsView: View {
                     ForEach(registry.registrations.filter { !registry.enabledIDs.contains($0.id) }) { card in
                         CardSettingsRow(
                             name: card.name,
-                            systemImage: card.systemImage,
+                            iconDescriptor: card.iconDescriptor,
+                            iconManifest: card.iconManifest,
                             isEnabled: enabledBinding(card.id)
                         )
                     }
@@ -233,13 +248,14 @@ private struct CardSettingsView: View {
 
 private struct CardSettingsRow: View {
     let name: String
-    let systemImage: String
+    let iconDescriptor: FunctionCardIconDescriptor
+    let iconManifest: FunctionCardIconManifest?
     @Binding var isEnabled: Bool
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .frame(width: 18, alignment: .center)
+            FunctionCardIconView(descriptor: iconDescriptor, manifest: iconManifest)
+                .frame(width: 18, height: 18, alignment: .center)
                 .accessibilityHidden(true)
             Text(name)
             Spacer()

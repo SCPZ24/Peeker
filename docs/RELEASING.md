@@ -16,20 +16,22 @@ swift test --disable-sandbox --disable-automatic-resolution
 bash -n script/*.sh scripts/*.sh Tests/Shell/*.sh
 ./Tests/Shell/build_script_contract.sh
 ./Tests/Shell/feature_boundary_contract.sh
+./Tests/Shell/cli_help_contract.sh
 ./Tests/Shell/release_script_contract.sh
 plutil -lint Resources/Info.plist Resources/Peeker.entitlements
 ./scripts/build-app.sh release
-./scripts/verify-bundle.sh dist/Peeker.app 2.0.2
+./scripts/verify-bundle.sh dist/Peeker.app 2.1.0
 ```
 
-For local implementation acceptance, create a temporary archive under `.build/verification/` and run `verify-cask.sh` against it. Do not create `dist/Peeker-v2.0.2.zip` unless a formal release is explicitly authorized.
+For local implementation acceptance, create a temporary archive under `.build/verification/` and run `verify-cask.sh` against it. Do not create `dist/Peeker-v2.1.0.zip` unless a formal release is explicitly authorized.
 
 The Bundle gate verifies:
 
 - main executable `Contents/MacOS/Peeker`;
 - physically distinct `Contents/MacOS/peeker-cli`;
 - arm64-only binaries;
-- CLI schema `1`, version `2.0.2`, protocol `1`;
+- CLI schema `1`, version `2.1.0`, protocol `1`;
+- offline Targetor Lucide v1.27.0 manifest, all SVG hashes, licenses, file count, and representative rendering;
 - valid whole-Bundle signature.
 
 The Cask must map the embedded physical executable to user command `peeker`:
@@ -38,13 +40,13 @@ The Cask must map the embedded physical executable to user command `peeker`:
 binary "#{appdir}/Peeker.app/Contents/MacOS/peeker-cli", target: "peeker"
 ```
 
-Before App launch, verify `status` returns `running:false` and feature commands return `app_not_running` without creating SQLite. After launch, verify status and the three feature config routes.
+Before App launch, verify `status` returns `running:false` and feature commands return `app_not_running` without creating SQLite. After launch, verify status plus Timer, Pusher, Scheduler, and Targetor read routes; Agentor must remain absent from the public CLI.
 
 ## Publication
 
 Only after local and manual acceptance are complete:
 
-1. Run `./scripts/package-release.sh 2.0.2` once to create the immutable formal archive.
+1. Run `./scripts/package-release.sh 2.1.0` once to create the immutable formal archive.
 2. Verify Bundle, checksum, Cask syntax/style, and public command mapping.
 3. Create the annotated tag and GitHub Release.
 4. Upload the exact ZIP and `.sha256`.

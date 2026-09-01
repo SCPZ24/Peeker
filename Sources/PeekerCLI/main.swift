@@ -44,12 +44,12 @@ private enum PeekerCLI {
             return
         }
 
-        guard ["timer", "pusher", "scheduler"].contains(command), arguments.count >= 2 else {
+        guard ["timer", "pusher", "scheduler", "targetor"].contains(command), arguments.count >= 2 else {
             fail(PeekerError(code: "invalid_usage", message: "Unknown or incomplete command"))
         }
         let client = PeekerIPCClient()
         let featureArguments = Array(arguments.dropFirst())
-        let category = commandCategory(for: featureArguments)
+        let category = commandCategory(featureID: command, arguments: featureArguments)
         do {
             let envelope = try await client.request(
                 .command(CommandInvocation(
@@ -69,11 +69,14 @@ private enum PeekerCLI {
         }
     }
 
-    private static func commandCategory(for arguments: [String]) -> CommandCategory {
+    static func commandCategory(featureID: String, arguments: [String]) -> CommandCategory {
         guard let command = arguments.first else { return .mutation }
         if command == "list" || command == "get" { return .read }
         if command == "config", arguments.dropFirst().first == "get" { return .read }
-        if command == "source", arguments.dropFirst().first == "list" { return .read }
+        if featureID == "scheduler", command == "source", arguments.dropFirst().first == "list" { return .read }
+        if featureID == "timer", command == "temporary",
+           ["list", "get"].contains(arguments.dropFirst().first ?? "") { return .read }
+        if featureID == "targetor", command == "history" { return .read }
         return .mutation
     }
 

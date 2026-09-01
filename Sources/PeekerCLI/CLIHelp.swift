@@ -11,6 +11,7 @@ enum CLIHelp {
                   timer <command> [arguments]         Manage Timer
                   pusher <command> [arguments]        Manage Pusher
                   scheduler <command> [arguments]     Manage Scheduler
+                  targetor <command> [arguments]      Manage Targetor
 
                 Options:
                   -h, --help                          Show this help
@@ -48,6 +49,7 @@ enum CLIHelp {
                   start                               Start or resume one task
                   pause                               Pause the active task
                   move                                Reorder a Timer template
+                  temporary <command>                 Manage temporary Timer tasks
                   config <command>                    Read or update Timer configuration
 
                 Options:
@@ -141,8 +143,35 @@ enum CLIHelp {
                 """,
                 parent: "peeker timer"
             )
+        case "timer temporary":
+            page(
+                usage: "peeker timer temporary <command> [arguments]",
+                summary: "Manage active one-off Timer tasks.",
+                details: """
+                Commands:
+                  list                                List active temporary tasks
+                  get                                 Get one temporary task
+                  create                              Create a temporary task
+                  update                              Update a temporary task
+                  delete                              Archive a temporary task
+                  start                               Start or resume a temporary task
+                """,
+                discovery: "Run `peeker timer temporary <command> --help` for command options."
+            )
+        case "timer temporary list":
+            leaf(usage: "peeker timer temporary list", summary: "List active temporary Timer tasks.", details: "Tasks are ordered by creation time and stable ID.", parent: "peeker timer temporary")
+        case "timer temporary get":
+            leaf(usage: "peeker timer temporary get (--id <temporary-task-id> | <exact-name>)", summary: "Get one active temporary task.", details: selectorDetails(noun: "temporary-task", name: "exact-name"), parent: "peeker timer temporary")
+        case "timer temporary create":
+            leaf(usage: "peeker timer temporary create --name <name> --target <duration> --color <preset-hex> [--expire-on-refresh <bool>]", summary: "Create a temporary task when creation is enabled.", details: "Color must be one of the seven Peeker preset values.", parent: "peeker timer temporary")
+        case "timer temporary update":
+            leaf(usage: "peeker timer temporary update (--id <temporary-task-id> | <exact-name>) [options]", summary: "Update an active temporary task.", details: "Options: --name, --target, --color, --expire-on-refresh.", parent: "peeker timer temporary")
+        case "timer temporary delete":
+            leaf(usage: "peeker timer temporary delete (--id <temporary-task-id> | <exact-name>)", summary: "Settle and archive a temporary task.", details: selectorDetails(noun: "temporary-task", name: "exact-name"), parent: "peeker timer temporary")
+        case "timer temporary start":
+            leaf(usage: "peeker timer temporary start (--id <temporary-task-id> | <exact-name>)", summary: "Start or resume a temporary task.", details: "Another daily or temporary task is never switched implicitly.", parent: "peeker timer temporary")
         case "timer config":
-            configGroup(feature: "timer", fields: "enabled and refreshTime")
+            configGroup(feature: "timer", fields: "enabled, refreshTime, and temporaryTasksEnabled")
         case "timer config get":
             leaf(
                 usage: "peeker timer config get",
@@ -152,17 +181,58 @@ enum CLIHelp {
             )
         case "timer config set":
             leaf(
-                usage: "peeker timer config set [--enabled <bool>] [--refresh-time <HH:mm>]",
+                usage: "peeker timer config set [--enabled <bool>] [--refresh-time <HH:mm>] [--temporary-tasks-enabled <bool>]",
                 summary: "Update one or more Timer configuration values.",
                 details: """
                 Options:
                   --enabled <true|false>               Enable or disable the Timer card
                   --refresh-time <HH:mm>               Set local business-day refresh time
+                  --temporary-tasks-enabled <bool>     Allow creation of temporary tasks
 
                 At least one option is required. At least one function card must remain enabled.
                 """,
                 parent: "peeker timer config"
             )
+        case "targetor":
+            page(
+                usage: "peeker targetor <command> [arguments]",
+                summary: "Manage long-term targets and periodic check-ins.",
+                details: """
+                Commands:
+                  list                                List active or archived targets
+                  get                                 Get one target
+                  create                              Create a target
+                  update                              Update a target
+                  delete                              Soft-archive a target
+                  checkin                             Check in once for the current period
+                  history                             Read periods and events
+                  uncheck                             Remove a current-period event
+                  config <command>                    Read or update Targetor configuration
+                """,
+                discovery: "Run `peeker targetor <command> --help` for command options."
+            )
+        case "targetor list":
+            leaf(usage: "peeker targetor list [--archived active|all|only]", summary: "List Targetor targets.", details: "Default archive scope is active.", parent: "peeker targetor")
+        case "targetor get":
+            leaf(usage: "peeker targetor get (--id <target-id> | <exact-title>) [--include-archived <bool>]", summary: "Get one Targetor target.", details: selectorDetails(noun: "target", name: "exact-title"), parent: "peeker targetor")
+        case "targetor create":
+            leaf(usage: "peeker targetor create --title <title> [options]", summary: "Create a target and its first partial period.", details: "Options: --description, --icon, --period, --weekday, --month-day, --max-count.", parent: "peeker targetor")
+        case "targetor update":
+            leaf(usage: "peeker targetor update (--id <target-id> | <exact-title>) [options]", summary: "Update a target.", details: "Changing the period rule settles the current period; --description and --clear-description are exclusive.", parent: "peeker targetor")
+        case "targetor delete":
+            leaf(usage: "peeker targetor delete (--id <target-id> | <exact-title>)", summary: "Soft-archive a target while preserving history.", details: selectorDetails(noun: "target", name: "exact-title"), parent: "peeker targetor")
+        case "targetor checkin":
+            leaf(usage: "peeker targetor checkin (--id <target-id> | <exact-title>)", summary: "Atomically add one current-period check-in.", details: "A completed period returns targetor_cycle_complete.", parent: "peeker targetor")
+        case "targetor history":
+            leaf(usage: "peeker targetor history (--id <target-id> | <exact-title>) [--from <rfc3339> --to <rfc3339>]", summary: "Read Targetor period and event history.", details: "RFC 3339 boundaries require an offset and must be provided together.", parent: "peeker targetor")
+        case "targetor uncheck":
+            leaf(usage: "peeker targetor uncheck --event-id <event-id>", summary: "Delete one event from an active target's current period.", details: "Settled-period events cannot be removed.", parent: "peeker targetor")
+        case "targetor config":
+            configGroup(feature: "targetor", fields: "enabled and refreshTime")
+        case "targetor config get":
+            leaf(usage: "peeker targetor config get", summary: "Return Targetor enabled state and refresh time.", details: "refreshTime is returned as HH:mm.", parent: "peeker targetor config")
+        case "targetor config set":
+            leaf(usage: "peeker targetor config set [--enabled <bool>] [--refresh-time <HH:mm>]", summary: "Update Targetor configuration.", details: "At least one option is required.", parent: "peeker targetor config")
         case "pusher":
             page(
                 usage: "peeker pusher <command> [arguments]",

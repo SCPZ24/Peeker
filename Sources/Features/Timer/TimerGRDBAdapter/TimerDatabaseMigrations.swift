@@ -52,5 +52,32 @@ public enum TimerDatabaseMigrations {
                 table.primaryKey(["feature_id", "day_start_at_ms"])
             }
         },
+        AppDatabaseMigration(id: "timer-temporary-schema-v1") { db in
+            try db.create(table: "timer_temporary_tasks", options: .ifNotExists) { table in
+                table.column("id", .text).primaryKey()
+                table.column("name", .text).notNull()
+                table.column("target_seconds", .integer).notNull()
+                table.column("color_hex", .text).notNull()
+                table.column("accumulated_seconds", .integer).notNull().defaults(to: 0)
+                table.column("status", .text).notNull()
+                table.column("expire_on_refresh", .boolean).notNull().defaults(to: false)
+                table.column("created_at_ms", .integer).notNull()
+                table.column("updated_at_ms", .integer).notNull()
+                table.column("archived_at_ms", .integer)
+                table.column("archive_reason", .text)
+            }
+            try db.create(
+                index: "timer_temporary_active_created",
+                on: "timer_temporary_tasks",
+                columns: ["archived_at_ms", "created_at_ms", "id"],
+                options: .ifNotExists
+            )
+            let columns = try db.columns(in: "timer_sessions").map(\.name)
+            if !columns.contains("task_kind") {
+                try db.alter(table: "timer_sessions") { table in
+                    table.add(column: "task_kind", .text).notNull().defaults(to: "daily")
+                }
+            }
+        },
     ]
 }

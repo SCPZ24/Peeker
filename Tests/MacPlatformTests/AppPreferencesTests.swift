@@ -53,7 +53,7 @@ final class AppPreferencesTests: XCTestCase {
         let preferences = AppPreferences(defaults: makeDefaults())
         let snapshot = preferences.upgradedCards(registrations: registrations())
 
-        XCTAssertEqual(snapshot.enabledIDs.map(\.rawValue), ["timer", "pusher", "scheduler", "agentor"])
+        XCTAssertEqual(snapshot.enabledIDs.map(\.rawValue), ["timer", "pusher", "scheduler", "agentor", "targetor"])
         XCTAssertEqual(snapshot.recentID.rawValue, "timer")
     }
 
@@ -67,7 +67,7 @@ final class AppPreferencesTests: XCTestCase {
         let first = preferences.upgradedCards(registrations: registrations())
         let second = preferences.upgradedCards(registrations: registrations())
 
-        XCTAssertEqual(first.enabledIDs.map(\.rawValue), ["pusher", "scheduler", "agentor"])
+        XCTAssertEqual(first.enabledIDs.map(\.rawValue), ["pusher", "scheduler", "agentor", "targetor"])
         XCTAssertEqual(first.recentID.rawValue, "pusher")
         XCTAssertEqual(second.enabledIDs, first.enabledIDs)
     }
@@ -80,8 +80,24 @@ final class AppPreferencesTests: XCTestCase {
         defaults.set("scheduler", forKey: "recentCardID")
         let snapshot = AppPreferences(defaults: defaults).upgradedCards(registrations: registrations())
 
-        XCTAssertEqual(snapshot.enabledIDs.map(\.rawValue), ["scheduler", "timer", "agentor"])
+        XCTAssertEqual(snapshot.enabledIDs.map(\.rawValue), ["scheduler", "timer", "agentor", "targetor"])
         XCTAssertEqual(snapshot.recentID.rawValue, "scheduler")
+    }
+
+    func testV3UpgradeAppendsTargetorOnceAndPreservesExistingState() {
+        let defaults = makeDefaults()
+        defaults.set(3, forKey: "cardConfigurationVersion")
+        defaults.set(["agentor", "timer", "scheduler"], forKey: "enabledCardIDs")
+        defaults.set(["agentor", "timer", "scheduler", "pusher"], forKey: "cardOrder")
+        defaults.set("agentor", forKey: "recentCardID")
+        let preferences = AppPreferences(defaults: defaults)
+
+        let first = preferences.upgradedCards(registrations: registrations())
+        let second = preferences.upgradedCards(registrations: registrations())
+
+        XCTAssertEqual(first.enabledIDs.map(\.rawValue), ["agentor", "timer", "scheduler", "targetor"])
+        XCTAssertEqual(first.recentID.rawValue, "agentor")
+        XCTAssertEqual(second.enabledIDs, first.enabledIDs)
     }
 
     func testGenericFeaturePreferencesPreserveLegacyRawKeys() {
@@ -110,6 +126,7 @@ final class AppPreferencesTests: XCTestCase {
             registration(id: "pusher", order: 1, introduced: 1),
             registration(id: "scheduler", order: 2, introduced: 2),
             registration(id: "agentor", order: 3, introduced: 3),
+            registration(id: "targetor", order: 4, introduced: 4),
         ]
     }
 

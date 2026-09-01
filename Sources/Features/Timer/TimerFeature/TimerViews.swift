@@ -10,8 +10,13 @@ public struct TimerFeatureDependencies {
     public let publishPrompt: @MainActor (FunctionCardPrompt) -> Void
     public let refreshTime: RefreshTime
     public let statisticsMode: TimerStatisticsMode
+    public let temporaryTasksEnabled: Bool
+    public let layoutState: FunctionCardLayoutState?
+    public let setPopoverPresented: @MainActor @Sendable (Bool) -> Void
+    public let setEditingText: @MainActor @Sendable (Bool) -> Void
     public let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     public let onStatisticsModeChanged: @MainActor (TimerStatisticsMode) -> Void
+    public let onTemporaryTasksEnabledChanged: @MainActor (Bool) -> Void
 
     public init(
         repository: any TimerRepository,
@@ -21,8 +26,13 @@ public struct TimerFeatureDependencies {
         publishPrompt: @escaping @MainActor (FunctionCardPrompt) -> Void = { _ in },
         refreshTime: RefreshTime = .midnight,
         statisticsMode: TimerStatisticsMode = .progress,
+        temporaryTasksEnabled: Bool = false,
+        layoutState: FunctionCardLayoutState? = nil,
+        setPopoverPresented: @escaping @MainActor @Sendable (Bool) -> Void = { _ in },
+        setEditingText: @escaping @MainActor @Sendable (Bool) -> Void = { _ in },
         onRefreshTimeChanged: @escaping @MainActor (RefreshTime) -> Void = { _ in },
-        onStatisticsModeChanged: @escaping @MainActor (TimerStatisticsMode) -> Void = { _ in }
+        onStatisticsModeChanged: @escaping @MainActor (TimerStatisticsMode) -> Void = { _ in },
+        onTemporaryTasksEnabledChanged: @escaping @MainActor (Bool) -> Void = { _ in }
     ) {
         self.repository = repository
         self.clock = clock
@@ -31,8 +41,13 @@ public struct TimerFeatureDependencies {
         self.publishPrompt = publishPrompt
         self.refreshTime = refreshTime
         self.statisticsMode = statisticsMode
+        self.temporaryTasksEnabled = temporaryTasksEnabled
+        self.layoutState = layoutState
+        self.setPopoverPresented = setPopoverPresented
+        self.setEditingText = setEditingText
         self.onRefreshTimeChanged = onRefreshTimeChanged
         self.onStatisticsModeChanged = onStatisticsModeChanged
+        self.onTemporaryTasksEnabledChanged = onTemporaryTasksEnabledChanged
     }
 }
 
@@ -49,7 +64,7 @@ public enum TimerFeatureFactory {
 
     public static func make(dependencies: TimerFeatureDependencies) -> FunctionCardRegistration {
         let store = makeStore(dependencies: dependencies)
-        return makeRegistration(store: store)
+        return makeRegistration(store: store, dependencies: dependencies)
     }
 
     public static func makeStore(dependencies: TimerFeatureDependencies) -> TimerStore {
@@ -67,14 +82,28 @@ public enum TimerFeatureFactory {
                     summary: "✓ \(task.name)"
                 ))
             },
+            onTemporaryNaturalCompletion: { task in
+                dependencies.publishPrompt(FunctionCardPrompt(
+                    token: UUID().uuidString,
+                    sourceID: .timer,
+                    systemImage: "timer",
+                    moduleName: "Timer",
+                    summary: "✓ \(task.name)"
+                ))
+            },
             refreshTime: dependencies.refreshTime,
             statisticsMode: dependencies.statisticsMode,
+            temporaryTasksEnabled: dependencies.temporaryTasksEnabled,
             onRefreshTimeChanged: dependencies.onRefreshTimeChanged,
-            onStatisticsModeChanged: dependencies.onStatisticsModeChanged
+            onStatisticsModeChanged: dependencies.onStatisticsModeChanged,
+            onTemporaryTasksEnabledChanged: dependencies.onTemporaryTasksEnabledChanged
         )
     }
 
-    public static func makeRegistration(store: TimerStore) -> FunctionCardRegistration {
+    public static func makeRegistration(
+        store: TimerStore,
+        dependencies: TimerFeatureDependencies? = nil
+    ) -> FunctionCardRegistration {
         Task { await store.load() }
         return FunctionCardRegistration(
             id: .timer,
@@ -82,10 +111,20 @@ public enum TimerFeatureFactory {
             systemImage: "timer",
             defaultOrder: 0,
             metrics: metrics,
-            isCompactEligible: { store.runningTask != nil },
+            layoutState: dependencies?.layoutState,
+            isCompactEligible: { store.hasRunningTask },
             makeCompactLeadingView: { AnyView(TimerCompactLeadingView(store: store)) },
             makeCompactTrailingView: { AnyView(TimerCompactTrailingView(store: store)) },
-            makeExpandedView: { AnyView(TimerExpandedView(store: store)) },
+            makeExpandedView: {
+                if let dependencies {
+                    return AnyView(TimerExpandedView(
+                        store: store,
+                        setPopoverPresented: dependencies.setPopoverPresented,
+                        setEditingText: dependencies.setEditingText
+                    ))
+                }
+                return AnyView(TimerExpandedView(store: store))
+            },
             makeSettingsView: { AnyView(TimerSettingsView(store: store)) }
         )
     }
@@ -108,6 +147,12 @@ private struct TimerCompactLeadingView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .foregroundStyle(TimerIslandAppearance.primaryText)
             }
+        } else if let task = store.runningTemporaryTask {
+            HStack(spacing: 8) {
+                Circle().fill(Color(hex: task.colorHex)).frame(width: 8, height: 8)
+                Text(task.name).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(TimerIslandAppearance.primaryText)
+            }
         } else {
             Label("Timer", systemImage: "timer")
                 .foregroundStyle(TimerIslandAppearance.secondaryText)
@@ -126,6 +171,12 @@ private struct TimerCompactTrailingView: View {
                     .foregroundStyle(TimerIslandAppearance.secondaryText)
                     .fixedSize(horizontal: true, vertical: false)
                     .layoutPriority(2)
+            } else if let task = store.runningTemporaryTask {
+                Text(formatDuration(store.remainingSeconds(for: task, at: context.date)))
+                    .monospacedDigit()
+                    .foregroundStyle(TimerIslandAppearance.secondaryText)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(2)
             }
         }
     }
@@ -133,15 +184,36 @@ private struct TimerCompactTrailingView: View {
 
 private struct TimerExpandedView: View {
     @Bindable var store: TimerStore
+    let setPopoverPresented: @MainActor @Sendable (Bool) -> Void
+    let setEditingText: @MainActor @Sendable (Bool) -> Void
+    @State private var creatingTemporary = false
+
+    init(
+        store: TimerStore,
+        setPopoverPresented: @escaping @MainActor @Sendable (Bool) -> Void = { _ in },
+        setEditingText: @escaping @MainActor @Sendable (Bool) -> Void = { _ in }
+    ) {
+        self.store = store
+        self.setPopoverPresented = setPopoverPresented
+        self.setEditingText = setEditingText
+    }
 
     var body: some View {
         HStack(spacing: 18) {
             Group {
-                if let state = store.dayState, !state.visibleTasks.isEmpty {
+                if let state = store.dayState,
+                   !state.visibleTasks.isEmpty || !state.activeTemporaryTasks.isEmpty {
                     ScrollView {
                         LazyVStack(spacing: 8) {
                             ForEach(state.visibleTasks) { task in
                                 TimerTaskRow(store: store, task: task)
+                            }
+                            ForEach(state.activeTemporaryTasks) { task in
+                                TimerTemporaryTaskRow(
+                                    store: store, task: task,
+                                    setPopoverPresented: setPopoverPresented,
+                                    setEditingText: setEditingText
+                                )
                             }
                         }
                     }
@@ -154,37 +226,201 @@ private struct TimerExpandedView: View {
 
             Divider().overlay(.white.opacity(0.2))
 
-            Group {
-                if store.statisticsMode == .progress {
-                    if let tasks = store.dayState?.visibleTasks, !tasks.isEmpty {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let snapshots = tasks.map { task in
-                                TimerProgressSnapshot(
-                                    targetSeconds: task.targetSeconds,
-                                    remainingSeconds: store.remainingSeconds(for: task, at: context.date)
-                                )
-                            }
-                            if let ratio = TimerProgressMetrics.totalRatio(snapshots) {
-                                TimerCompletionRing(ratio: ratio)
-                            }
-                        }
-                    } else {
-                        Text("添加目标后显示完成度")
-                            .foregroundStyle(TimerIslandAppearance.secondaryText)
-                            .multilineTextAlignment(.center)
+            VStack(spacing: 8) {
+                if store.temporaryTasksEnabled {
+                    Button {
+                        creatingTemporary = true
+                        setPopoverPresented(true)
+                    } label: {
+                        Label("新增临时任务", systemImage: "plus.circle.fill")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                } else {
-                    TimerActivityCalendar(store: store)
+                    .buttonStyle(.plain)
+                    .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .popover(isPresented: $creatingTemporary, arrowEdge: .bottom) {
+                        TimerTemporaryEditor(store: store, task: nil, setEditingText: setEditingText) {
+                            creatingTemporary = false
+                            setPopoverPresented(false)
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
                 }
+                TimerStatisticsPanel(store: store)
+                    .frame(maxHeight: .infinity)
             }
             .frame(width: 165)
             .frame(maxHeight: .infinity, alignment: .center)
+        }
+        .onChange(of: creatingTemporary) { _, presented in
+            if !presented { setPopoverPresented(false) }
         }
         .overlay(alignment: .bottomLeading) {
             if let error = store.errorMessage {
                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
         }
+    }
+}
+
+private struct TimerStatisticsPanel: View {
+    @Bindable var store: TimerStore
+
+    var body: some View {
+        Group {
+            if store.statisticsMode == .progress {
+                if let state = store.dayState,
+                   !state.visibleTasks.isEmpty || !state.activeTemporaryTasks.isEmpty {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        let daily = state.visibleTasks.map { task in
+                            TimerProgressSnapshot(
+                                targetSeconds: task.targetSeconds,
+                                remainingSeconds: store.remainingSeconds(for: task, at: context.date)
+                            )
+                        }
+                        let temporary = state.activeTemporaryTasks.map { task in
+                            TimerProgressSnapshot(
+                                targetSeconds: task.targetSeconds,
+                                remainingSeconds: store.remainingSeconds(for: task, at: context.date)
+                            )
+                        }
+                        if let ratio = TimerProgressMetrics.totalRatio(daily + temporary) {
+                            TimerCompletionRing(ratio: ratio)
+                        }
+                    }
+                } else {
+                    Text("添加目标后显示完成度")
+                        .foregroundStyle(TimerIslandAppearance.secondaryText)
+                        .multilineTextAlignment(.center)
+                }
+            } else {
+                TimerActivityCalendar(store: store)
+            }
+        }
+        .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct TimerTemporaryTaskRow: View {
+    @Bindable var store: TimerStore
+    let task: TimerTemporaryTask
+    let setPopoverPresented: @MainActor @Sendable (Bool) -> Void
+    let setEditingText: @MainActor @Sendable (Bool) -> Void
+    @State private var editing = false
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = store.remainingSeconds(for: task, at: context.date)
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 3).fill(Color(hex: task.colorHex)).frame(width: 6, height: 34)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text(task.name).font(.headline).lineLimit(1)
+                        Text("临时").font(.system(size: 8, weight: .bold)).padding(.horizontal, 4)
+                            .background(.white.opacity(0.15), in: Capsule())
+                    }
+                    Text(task.status == .completed ? "已完成" : formatDuration(remaining))
+                        .font(.caption.monospacedDigit()).foregroundStyle(task.status == .completed ? .green : .secondary)
+                }
+                .frame(width: 170, alignment: .leading)
+                TimerTaskProgressBar(
+                    ratio: TimerProgressSnapshot(targetSeconds: task.targetSeconds, remainingSeconds: remaining).ratio,
+                    color: Color(hex: task.colorHex)
+                ).frame(minWidth: 80, maxWidth: .infinity).frame(height: 4)
+                Button { editing = true; setPopoverPresented(true) } label: {
+                    Image(systemName: "pencil")
+                }.buttonStyle(.plain)
+                .popover(isPresented: $editing, arrowEdge: .bottom) {
+                    TimerTemporaryEditor(store: store, task: task, setEditingText: setEditingText) {
+                        editing = false; setPopoverPresented(false)
+                    }
+                }
+                if task.status == .running {
+                    Button { Task { try? await store.pause() } } label: { Image(systemName: "pause.fill") }
+                        .buttonStyle(.plain)
+                } else if task.status == .completed {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                } else {
+                    Button { Task { try? await store.startTemporaryTask(id: task.id) } } label: { Image(systemName: "play.fill") }
+                        .buttonStyle(.plain).disabled(store.hasRunningTask)
+                }
+            }
+            .padding(10).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        }
+        .onChange(of: editing) { _, value in if !value { setPopoverPresented(false) } }
+    }
+}
+
+private struct TimerTemporaryEditor: View {
+    let store: TimerStore
+    let task: TimerTemporaryTask?
+    let setEditingText: @MainActor @Sendable (Bool) -> Void
+    let dismiss: () -> Void
+    @State private var name: String
+    @State private var duration: TimerDurationDraft
+    @State private var colorHex: String
+    @State private var expireOnRefresh: Bool
+    @State private var errorMessage: String?
+    @FocusState private var nameFocused: Bool
+
+    init(
+        store: TimerStore,
+        task: TimerTemporaryTask?,
+        setEditingText: @escaping @MainActor @Sendable (Bool) -> Void,
+        dismiss: @escaping () -> Void
+    ) {
+        self.store = store; self.task = task; self.setEditingText = setEditingText; self.dismiss = dismiss
+        _name = State(initialValue: task?.name ?? "")
+        _duration = State(initialValue: task.map { TimerDurationDraft(targetSeconds: $0.targetSeconds) } ?? TimerDurationDraft())
+        _colorHex = State(initialValue: task?.colorHex ?? PeekerPresetColor.lakeBlue.rawValue)
+        _expireOnRefresh = State(initialValue: task?.expireOnRefresh ?? false)
+    }
+
+    var body: some View {
+        Form {
+            TextField("名称", text: $name)
+                .focused($nameFocused)
+                .onChange(of: nameFocused) { _, value in setEditingText(value) }
+            TimerDurationInput(duration: $duration)
+            TimerPresetColorPicker(colorHex: $colorHex)
+            Toggle("随刷新消失", isOn: $expireOnRefresh)
+            if let errorMessage { Text(errorMessage).font(.caption).foregroundStyle(.red) }
+            HStack {
+                if let task {
+                    Button("删除", role: .destructive) {
+                        Task { do { _ = try await store.deleteTemporaryTask(id: task.id); dismiss() }
+                            catch { errorMessage = error.localizedDescription } }
+                    }
+                }
+                Spacer()
+                Button("取消", action: dismiss)
+                Button("保存") { Task { await save() } }
+                    .buttonStyle(.borderedProminent).disabled(!isValid)
+            }
+        }
+        .padding(16).frame(width: 420)
+        .onDisappear { setEditingText(false) }
+    }
+
+    private var isValid: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && duration.targetSeconds != nil
+    }
+
+    private func save() async {
+        guard let target = duration.targetSeconds else { return }
+        do {
+            if let task {
+                _ = try await store.updateTemporaryTask(
+                    id: task.id, name: name, targetSeconds: target,
+                    colorHex: colorHex, expireOnRefresh: expireOnRefresh
+                )
+            } else {
+                _ = try await store.createTemporaryTask(
+                    name: name, targetSeconds: target, colorHex: colorHex,
+                    expireOnRefresh: expireOnRefresh
+                )
+            }
+            dismiss()
+        } catch { errorMessage = error.localizedDescription }
     }
 }
 
@@ -261,6 +497,10 @@ private struct TimerSettingsView: View {
                     Text("今日完成度").tag(TimerStatisticsMode.progress)
                     Text("当月热力日历").tag(TimerStatisticsMode.heatmap)
                 }
+                Toggle("允许临时计时任务", isOn: Binding(
+                    get: { store.temporaryTasksEnabled },
+                    set: { store.setTemporaryTasksEnabled($0) }
+                ))
             }
             Section("每日计时目标") {
                 List {
@@ -640,14 +880,20 @@ private struct TimerActivityCalendar: View {
     private func state(for day: CalendarMonthDay, at now: Date) -> TimerCalendarRingState {
         if day.isFutureBusinessDay { return .future }
         if day.isCurrentBusinessDay {
-            guard let tasks = store.dayState?.visibleTasks else { return .noTasks }
-            let progress = tasks.map {
+            guard let state = store.dayState else { return .noTasks }
+            let daily = state.visibleTasks.map {
                 TimerProgressSnapshot(
                     targetSeconds: $0.targetSeconds,
                     remainingSeconds: store.remainingSeconds(for: $0, at: now)
                 )
             }
-            return .recorded(ratio: TimerProgressMetrics.totalRatio(progress))
+            let temporary = state.activeTemporaryTasks.map {
+                TimerProgressSnapshot(
+                    targetSeconds: $0.targetSeconds,
+                    remainingSeconds: store.remainingSeconds(for: $0, at: now)
+                )
+            }
+            return .recorded(ratio: TimerProgressMetrics.totalRatio(daily + temporary))
         }
         guard let snapshot = snapshot(for: day.date) else { return .missing }
         return .recorded(ratio: snapshot.completionRatio)

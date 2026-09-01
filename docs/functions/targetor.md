@@ -216,7 +216,7 @@ Targetor 使用自己的全局刷新时刻，不复用 Timer 或 Pusher 的业�
 
 ### 7.1 五级色阶
 
-所有日历先计算 `0...1` 完成度，再映射为：
+所有日历先计算 `0...1` 完成度，再映射为系统蓝语义色的四档非空明度：
 
 | 完成度 | 色阶 |
 | --- | --- |
@@ -240,7 +240,7 @@ Targetor 使用自己的全局刷新时刻，不复用 Timer 或 Pusher 的业�
 每个日期格的计算：
 
 1. 找出在该日期对应 Targetor 日区间内有效的目标；创建前和归档后的目标不参与。
-2. 对每个目标取得覆盖该日期的日/周/月周期完成度并封顶 1。
+2. 对每个目标取得与该日区间相交的日/周/月周期并封顶完成度为 1；若规则切换导致同一日有多个相交周期，选择 `start` 最晚的新周期。
 3. 对这些目标等权平均；不按 max 加权。
 4. 没有有效目标时为空。
 
@@ -280,7 +280,8 @@ Targetor 离线随 App Bundle 分发 Lucide v1.27.0 完整图标目录和搜索�
 - 只解析 manifest 白名单内的 Bundle 资源，拒绝用户路径、外部文件和未知名称；
 - Targetor 自身的标签、设置和 Prompt 使用同一 manifest 中的 `target`；
 - Bundle 包含 icon artwork 的 MIT 许可声明，以及 Lucide 项目代码/元数据的 ISC 许可声明；
-- 版本化 manifest 保存资源版本、文件列表和 SHA-256，构建验证资源存在、哈希匹配且可由 macOS SVG 渲染器打开。
+- 版本化 manifest 保存资源版本、文件列表和 SHA-256，构建验证资源存在、哈希匹配且可由 macOS SVG 渲染器打开；
+- 运行时只通过公开 `NSImage` 与 SwiftUI API 按需渲染，`sips`/CoreSVG 仅属于发布验证，不链接或调用私有 CoreSVG API。
 
 更新 Lucide 版本属于显式依赖升级，必须保留旧目标已使用 icon name 的兼容映射或迁移，不能静默丢失图标。
 
@@ -393,6 +394,8 @@ Targetor 不提供 CLI `move`。设置页排序是唯一排序入口。
 - 不发布 Prompt。
 
 ### 11.5 list/get/history 输出
+
+CLI 中 `state` 的 wire value 固定为 `notStarted | started | progressing | completed`，不得本地化或改名。
 
 活动目标对象至少包含：
 
