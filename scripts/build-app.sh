@@ -45,6 +45,15 @@ BIN_DIR="$(swift build "${SWIFTPM_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --show-bi
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$MACOS_DIR" "$CONTENTS/Resources"
+LOCALIZATION_MANIFEST="$CONTENTS/Resources/localization-bundles.txt"
+: > "$LOCALIZATION_MANIFEST"
+for resource_bundle in "$BIN_DIR"/*.bundle; do
+  [[ -d "$resource_bundle" ]] || continue
+  cp -R "$resource_bundle" "$CONTENTS/Resources/"
+  if [[ -d "$resource_bundle/en.lproj" ]]; then
+    basename "$resource_bundle" >> "$LOCALIZATION_MANIFEST"
+  fi
+done
 cp "$BIN_DIR/$APP_NAME" "$MACOS_DIR/$APP_NAME"
 cp "$BIN_DIR/peeker-cli" "$MACOS_DIR/peeker-cli"
 cp "$BIN_DIR/peeker-agentor-hook" "$MACOS_DIR/peeker-agentor-hook"

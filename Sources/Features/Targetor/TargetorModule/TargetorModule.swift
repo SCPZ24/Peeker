@@ -41,11 +41,13 @@ public struct TargetorModule: FunctionCardModule {
             publishPrompt: { result in
                 let period = result.target.currentPeriod
                 context.hostActions.publishPrompt(FunctionCardPrompt(
-                    token: UUID().uuidString,
+                    token: result.event.id.uuidString,
                     sourceID: .targetor,
                     iconDescriptor: .bundleSVG(featureID: .targetor, manifestResourceName: "target"),
                     moduleName: "Targetor",
-                    summary: "已打卡：\(result.target.target.title) \(period?.count ?? 0)/\(period?.maxCountSnapshot ?? result.target.target.maxCount)"
+                    summary: result.target.target.title,
+                    message: L10n.message("已打卡：%1$@ %2$@/%3$@", result.target.target.title, String(period?.count ?? 0), String(period?.maxCountSnapshot ?? result.target.target.maxCount)),
+                    style: .success
                 ))
             }
         )

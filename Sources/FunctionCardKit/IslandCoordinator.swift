@@ -16,6 +16,7 @@ public final class IslandCoordinator {
     public let registry: CardRegistry
     public let promptCenter: PromptCenter
     public private(set) var isPointerInside = false
+    public var isVisualActivityEnabled = true
     public private(set) var hoverExpansionDelaySeconds: Double
     @ObservationIgnored private var pendingExpansionTask: Task<Void, Never>?
     @ObservationIgnored private var collapseTask: Task<Void, Never>?
@@ -64,8 +65,10 @@ public final class IslandCoordinator {
         pendingExpansionTask?.cancel()
 
         switch surfaceDescription {
-        case .prompt, .expanded:
-            expandCurrentSurface()
+        case .prompt:
+            promptCenter.setPlaybackAllowed(false)
+        case .expanded:
+            break
         case .compact, .resting:
             guard hoverExpansionDelaySeconds > 0 else {
                 expandCurrentSurface()
@@ -83,6 +86,7 @@ public final class IslandCoordinator {
 
     public func pointerExited() {
         isPointerInside = false
+        promptCenter.setPlaybackAllowed(true)
         pendingExpansionTask?.cancel()
         pendingExpansionTask = nil
         scheduleCollapseIfAllowed()
@@ -114,8 +118,25 @@ public final class IslandCoordinator {
     }
 
     public func select(_ id: FeatureID) {
+        guard id == registry.selectedID || !presentation.blockers.isActive else { return }
         registry.select(id)
         mutatePresentation { $0.select(featureID: id) }
+    }
+
+    public func openCurrentPrompt() {
+        guard let prompt = promptCenter.current else { return }
+        guard !presentation.blockers.isActive else {
+            promptCenter.setPlaybackAllowed(false)
+            return
+        }
+        _ = promptCenter.consumeCurrent()
+        if isExpanded {
+            select(prompt.sourceID)
+        } else {
+            registry.select(prompt.sourceID)
+            mutatePresentation { $0.pointerEntered(featureID: prompt.sourceID) }
+        }
+        promptCenter.setPlaybackAllowed(true)
     }
 
     public func publishPrompt(_ prompt: FunctionCardPrompt) {
@@ -150,16 +171,19 @@ public final class IslandCoordinator {
 
     public func setPopoverPresented(_ presented: Bool) {
         mutatePresentation { $0.setPopoverPresented(presented) }
+        if !presentation.blockers.isActive { promptCenter.setPlaybackAllowed(true) }
         if !presented, !isPointerInside { scheduleCollapseIfAllowed() }
     }
 
     public func setDragging(_ dragging: Bool) {
         mutatePresentation { $0.blockers.isDragging = dragging }
+        if !presentation.blockers.isActive { promptCenter.setPlaybackAllowed(true) }
         if !dragging, !isPointerInside { scheduleCollapseIfAllowed() }
     }
 
     public func setEditingText(_ editing: Bool) {
         mutatePresentation { $0.blockers.isEditingText = editing }
+        if !presentation.blockers.isActive { promptCenter.setPlaybackAllowed(true) }
         if !editing, !isPointerInside { scheduleCollapseIfAllowed() }
     }
 
@@ -178,7 +202,7 @@ public final class IslandCoordinator {
             featureID = id
         }
         registry.select(featureID)
-        promptCenter.setPlaybackAllowed(false)
+        promptCenter.setPlaybackAllowed(true)
         mutatePresentation { $0.pointerEntered(featureID: featureID) }
     }
 
@@ -188,6 +212,8 @@ public final class IslandCoordinator {
     }
 
     private func finishExpansion() {
+        promptCenter.setPlaybackAllowed(false)
+        if promptCenter.displayedAt != nil { _ = promptCenter.consumeCurrent() }
         presentation = IslandPresentationState(base: resolvedBase)
         promptCenter.setPlaybackAllowed(true, after: .milliseconds(1_500))
     }

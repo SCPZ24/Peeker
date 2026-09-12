@@ -12,6 +12,7 @@ import FeatureRuntimeKit
 final class AppRuntime {
     static let shared = AppRuntime()
 
+    let language = AppLanguageContext.shared
     let preferences: AppPreferences
     let screens: ScreenTopologyService
     let launchAtLogin: LaunchAtLoginManager
@@ -38,6 +39,7 @@ final class AppRuntime {
 
     private init() {
         preferences = AppPreferences()
+        language.selection = preferences.language
         screens = ScreenTopologyService()
         launchAtLogin = LaunchAtLoginManager()
         updateChecker = GitHubReleaseChecker()
@@ -168,10 +170,12 @@ final class AppRuntime {
     }
 
     func handleSleep() {
+        islandCoordinator.isVisualActivityEnabled = false
         Task { await eventHub.sleep() }
     }
 
     func handleWake() {
+        islandCoordinator.isVisualActivityEnabled = true
         Task { await eventHub.wake() }
     }
 

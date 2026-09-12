@@ -32,346 +32,460 @@ public enum SchedulerFeatureFactory {
 private struct SchedulerWeekView: View {
     @Bindable var store: SchedulerStore
     let setPopoverPresented: @MainActor (Bool) -> Void
+    @Environment(\.nativePresentationColorScheme) private var nativeColorScheme
+    @Environment(\.isVisualActivityEnabled) private var isVisible
     @State private var draft: SchedulerEvent?
+    @State private var editorForm: SchedulerEditorDraft?
+    @State private var editorAnchor = "new"
+    @State private var needsRefresh = false
+    @State private var editingExisting = false
+    @State private var pendingDiscardAction: (() -> Void)?
+    @State private var occurrenceKey: String?
+    @State private var mutationScope: SchedulerMutationScope?
+    @State private var scopeOccurrence: SchedulerOccurrence?
+    @State private var errorMessage: String?
+    @State private var isSaving = false
+    @State private var moreDay: Int?
+    @State private var dayList: Int?
+    @State private var placements: [SchedulerEventPlacement] = []
     private let hourHeight: CGFloat = 52
+    private var calendar: Calendar { .current }
 
     var body: some View {
         VStack(spacing: 8) {
             header
+            dayTitles
             allDayArea
             ScrollViewReader { proxy in
                 ScrollView(.vertical) {
                     ZStack(alignment: .topLeading) {
                         timeGrid
                         timedEvents
+                        currentTimeLine
                     }
                     .frame(height: hourHeight * 24)
                 }
                 .onAppear { proxy.scrollTo(initialHour, anchor: .top) }
             }
         }
-        .onChange(of: draft?.id) { _, newValue in
-            setPopoverPresented(newValue != nil)
+        .onAppear { updatePlacements() }
+        .onChange(of: store.occurrences) { _, _ in updatePlacements() }
+        .onChange(of: store.visibleFrom) { _, _ in updatePlacements() }
+        .onChange(of: draft?.id) { _, value in setPopoverPresented(value != nil) }
+        .onDisappear { setPopoverPresented(false) }
+        .confirmationDialog(L10n.text("选择重复日程的操作范围"), isPresented: Binding(
+            get: { scopeOccurrence != nil }, set: { if !$0 { scopeOccurrence = nil } }
+        ), titleVisibility: .visible) {
+            if let occurrence = scopeOccurrence {
+                Button(L10n.text("仅本次")) { open(occurrence, scope: .this) }
+                Button(L10n.text("本次及之后")) { open(occurrence, scope: .future) }
+                Button(L10n.text("整个系列（清除例外记录）")) { open(occurrence, scope: .all) }
+            }
+            Button(L10n.text("取消"), role: .cancel) { scopeOccurrence = nil }
         }
-        .onDisappear {
-            setPopoverPresented(false)
-        }
-        .popover(item: $draft) { event in
-            SchedulerEventEditor(
-                event: event,
-                onCancel: { draft = nil },
-                onSave: { updated in
-                    Task {
-                        if store.events.contains(where: { $0.id == updated.id }) {
-                            _ = try? await store.update(updated, occurrenceKey: updated.recurrence.map { _ in SchedulerRecurrenceExpander.originalKey(updated.time) }, scope: updated.recurrence == nil ? nil : .all)
-                        } else {
-                            _ = try? await store.create(updated)
-                        }
-                        draft = nil
-                    }
-                },
-                onDelete: store.events.contains(where: { $0.id == event.id }) ? {
-                    Task {
-                        _ = try? await store.delete(
-                            id: event.id,
-                            occurrenceKey: event.recurrence.map { _ in SchedulerRecurrenceExpander.originalKey(event.time) },
-                            scope: event.recurrence == nil ? nil : .all
-                        )
-                        draft = nil
-                    }
-                } : nil
-            )
-            .environment(\.colorScheme, .light)
-            .foregroundStyle(Color.black)
-            .foregroundColor(.black)
-            .tint(.accentColor)
+        .confirmationDialog(L10n.text("放弃未保存的更改？"), isPresented: Binding(
+            get: { pendingDiscardAction != nil }, set: { if !$0 { pendingDiscardAction = nil } }
+        ), titleVisibility: .visible) {
+            Button(L10n.text("放弃更改"), role: .destructive) {
+                let action = pendingDiscardAction
+                pendingDiscardAction = nil
+                action?()
+            }
+            Button(L10n.text("取消"), role: .cancel) { pendingDiscardAction = nil }
         }
         .overlay {
             if store.isLoading { ProgressView() }
-            else if let error = store.errorMessage {
-                ContentUnavailableView("Scheduler 无法载入", systemImage: "exclamationmark.triangle", description: Text(error))
+        }
+        .overlay(alignment: .bottom) {
+            if let error = store.localizedErrorMessage {
+                Text(error).font(.callout).foregroundStyle(.red)
+            }
+        }
+    }
+
+    @ViewBuilder private var editorContent: some View {
+        if let event = draft, let editorForm {
+            SchedulerEventEditor(
+                form: editorForm,
+                errorMessage: editingExisting && !store.events.contains(where: { $0.id == event.id }) && !needsRefresh ? L10n.text("日程已被删除；可复制保留输入。") : errorMessage,
+                isSaving: isSaving,
+                canSave: !needsRefresh && (!editingExisting || store.events.contains(where: { $0.id == event.id })),
+                onCancel: { afterDiscarding { draft = nil; self.editorForm = nil } },
+                onSave: { updated in
+                    guard !isSaving else { return }
+                    isSaving = true
+                    Task {
+                        defer { isSaving = false }
+                        do {
+                            if editingExisting {
+                                _ = try await store.update(updated, occurrenceKey: occurrenceKey, scope: mutationScope)
+                            } else {
+                                _ = try await store.create(updated)
+                            }
+                            draft = nil
+                            self.editorForm = nil
+                        } catch {
+                            needsRefresh = error is SchedulerPostCommitRefreshError
+                            errorMessage = needsRefresh ? L10n.text("更改已保存，请刷新视图；不要重复提交。") : L10n.text("保存失败：%1$@", String(describing: error.localizedDescription))
+                        }
+                    }
+                },
+                onDelete: store.events.contains(where: { $0.id == event.id }) ? {
+                    guard !isSaving else { return }
+                    isSaving = true
+                    Task {
+                        defer { isSaving = false }
+                        do {
+                            _ = try await store.delete(id: event.id, occurrenceKey: occurrenceKey, scope: mutationScope)
+                            draft = nil
+                            self.editorForm = nil
+                        } catch {
+                            needsRefresh = error is SchedulerPostCommitRefreshError
+                            errorMessage = needsRefresh ? L10n.text("更改已保存，请刷新视图；不要重复提交。") : L10n.text("删除失败：%1$@", String(describing: error.localizedDescription))
+                        }
+                    }
+                } : nil
+            )
+            .environment(\.colorScheme, nativeColorScheme)
+            .foregroundStyle(.primary)
+            if needsRefresh {
+                Button(L10n.text("刷新")) {
+                    Task {
+                        do {
+                            try await store.refreshAfterCommit()
+                            needsRefresh = false; draft = nil; self.editorForm = nil
+                        } catch { errorMessage = error.localizedDescription }
+                    }
+                }
             }
         }
     }
 
     private var header: some View {
         HStack {
-            Button { store.showWeek(containing: store.visibleFrom.addingTimeInterval(-86_400)) } label: { Image(systemName: "chevron.left") }
-            Button("今天") { store.showWeek(containing: Date()) }
-            Button { store.showWeek(containing: store.visibleTo.addingTimeInterval(86_400)) } label: { Image(systemName: "chevron.right") }
+            Button { shiftWeek(-1) } label: { Image(systemName: "chevron.left") }
+            Button(L10n.text("今天")) { navigateToWeek(Date()) }
+            Button { shiftWeek(1) } label: { Image(systemName: "chevron.right") }
             Spacer()
-            Text("\(store.visibleFrom.formatted(date: .abbreviated, time: .omitted)) – \(store.visibleTo.addingTimeInterval(-1).formatted(date: .abbreviated, time: .omitted))")
+            Text(store.visibleFrom.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, locale: AppLanguageContext.shared.locale)))
                 .font(.headline)
             Spacer()
+            Button(L10n.text("新建"), systemImage: "plus") { createTimed(day: 0, minute: 9 * 60) }
+                .popover(isPresented: editorBinding("new")) { editorContent }
         }
         .buttonStyle(.borderless)
     }
 
-    private var allDayArea: some View {
+    private var dayTitles: some View {
         HStack(spacing: 1) {
-            Text("全天").font(.caption).frame(width: 42)
+            Color.clear.frame(width: 42, height: 22)
             ForEach(0..<7, id: \.self) { day in
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(store.visibleFrom.addingTimeInterval(Double(day * 86_400)).formatted(.dateTime.weekday(.abbreviated).day()))
-                        .font(.caption.weight(.semibold))
-                    ForEach(allDayOccurrences(day: day).prefix(3)) { occurrence in
-                        Text(occurrence.title).font(.caption2).lineLimit(1)
-                            .padding(.horizontal, 4).padding(.vertical, 2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(hex: occurrence.colorHex).opacity(0.7), in: RoundedRectangle(cornerRadius: 4))
-                    }
-                    Spacer(minLength: 0)
+                Button { dayList = day } label: {
+                Text(date(day).formatted(.dateTime.weekday(.abbreviated).day().locale(AppLanguageContext.shared.locale)))
+                    .font(.system(size: 12, weight: calendar.isDateInToday(date(day)) ? .semibold : .regular))
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
                 }
-                .padding(4).frame(maxWidth: .infinity, minHeight: 62, alignment: .topLeading)
-                .background(Color.white.opacity(0.04))
-                .contentShape(Rectangle())
-                .onTapGesture { createAllDay(day: day) }
+                .buttonStyle(.plain)
+                .popover(isPresented: Binding(get: { dayList == day }, set: { if !$0 { dayList = nil } })) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(store.occurrences.filter { occurrence in
+                                allDayOccurrences(day: day).contains(where: { $0.id == occurrence.id }) || placements.contains(where: { $0.segment.day == day && $0.segment.occurrence.id == occurrence.id })
+                            }) { occurrence in
+                                Button(occurrence.title) { dayList = nil; editorAnchor = "new"; select(occurrence) }
+                            }
+                        }.padding()
+                    }.frame(width: 300, height: 260)
+                    .environment(\.colorScheme, nativeColorScheme)
+                }
             }
         }
+        .frame(height: 24)
+    }
+
+    private var allDayArea: some View {
+        let rowCount = min(2, (0..<7).map { allDayOccurrences(day: $0).count }.max() ?? 0)
+        return HStack(alignment: .top, spacing: 1) {
+            Text(L10n.text("全天")).font(.system(size: 11)).frame(width: 42)
+            ForEach(0..<7, id: \.self) { day in
+                let events = allDayOccurrences(day: day)
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(events.prefix(SchedulerAllDayLayout.visibleCount(events.count))) { occurrence in
+                        eventButton(occurrence, anchor: "\(occurrence.id):\(day)")
+                            .frame(height: 21)
+                    }
+                    if events.count > 2 {
+                        Button("+\(events.count - 1)") { moreDay = day }
+                            .frame(height: 21)
+                            .buttonStyle(.plain)
+                            .popover(isPresented: Binding(
+                                get: { moreDay == day }, set: { if !$0 { moreDay = nil } }
+                            )) {
+                                ScrollView {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        ForEach(events) { occurrence in
+                                            Button(occurrence.title) { moreDay = nil; editorAnchor = "new"; select(occurrence) }
+                                                .buttonStyle(.borderless)
+                                        }
+                                    }.padding()
+                                }.frame(width: 280, height: min(320, CGFloat(events.count * 32)))
+                                .environment(\.colorScheme, nativeColorScheme)
+                            }
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: CGFloat(max(1, rowCount) * 24), alignment: .topLeading)
+                .background {
+                    Color.clear.contentShape(Rectangle()).onTapGesture(count: 2) { createAllDay(day: day) }
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var timeGrid: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 ForEach(0..<24, id: \.self) { hour in
-                    Text(String(format: "%02d:00", hour)).font(.caption2).foregroundStyle(.secondary)
-                        .frame(width: 42, height: hourHeight, alignment: .top)
-                        .id(hour)
+                    Text(String(format: "%02d:00", hour)).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .frame(width: 42, height: hourHeight, alignment: .top).id(hour)
                 }
             }
             ForEach(0..<7, id: \.self) { day in
                 VStack(spacing: 0) {
                     ForEach(0..<24, id: \.self) { hour in
-                        Rectangle().fill(Color.clear).frame(height: hourHeight)
-                            .overlay(alignment: .top) { Divider().opacity(0.25) }
+                        Color.clear.frame(height: hourHeight)
+                            .overlay(alignment: .top) { Divider().opacity(0.2).allowsHitTesting(false) }
                             .contentShape(Rectangle())
-                            .gesture(SpatialTapGesture().onEnded { value in
+                            .gesture(SpatialTapGesture(count: 2).onEnded { value in
                                 let quarter = min(3, max(0, Int(value.location.y / (hourHeight / 4))))
                                 createTimed(day: day, minute: hour * 60 + quarter * 15)
                             })
                     }
-                }
-                .frame(maxWidth: .infinity).overlay(alignment: .leading) { Divider().opacity(0.25) }
+                }.frame(maxWidth: .infinity)
             }
         }
     }
 
     private var timedEvents: some View {
         GeometryReader { geometry in
-            let gridWidth = max(0, geometry.size.width - 42)
-            let dayWidth = gridWidth / 7
-            ForEach(timedSegments()) { segment in
-                Button { open(segment.occurrence) } label: {
-                    Text(segment.occurrence.title)
-                        .font(.caption).lineLimit(2).padding(4)
+            let dayWidth = max(0, geometry.size.width - 42) / 7
+            ForEach(placements) { placement in
+                let segment = placement.segment
+                eventButton(segment.occurrence, anchor: segment.id)
+                    .frame(width: max(1, dayWidth / CGFloat(placement.columnCount) - 3),
+                           height: min(max(22, segment.durationMinutes / 60 * hourHeight), (1440 - segment.startMinute) / 60 * hourHeight))
+                    .offset(x: 42 + CGFloat(segment.day) * dayWidth + CGFloat(placement.column) * dayWidth / CGFloat(placement.columnCount) + 1,
+                            y: segment.startMinute / 60 * hourHeight)
+            }
+        }
+    }
+
+    private func eventButton(_ occurrence: SchedulerOccurrence, anchor: String) -> some View {
+        Button { editorAnchor = anchor; select(occurrence) } label: {
+            Text(occurrence.title)
+                .font(.system(size: 12)).lineLimit(2)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(Color(hex: occurrence.colorHex).opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 1).fill(Color(hex: occurrence.colorHex)).frame(width: 2)
+                        .allowsHitTesting(false)
                 }
-                .buttonStyle(.plain)
-                    .frame(width: max(12, dayWidth - 4), height: max(18, segment.durationMinutes / 60 * hourHeight), alignment: .topLeading)
-                    .background(Color(hex: segment.occurrence.colorHex).opacity(0.82), in: RoundedRectangle(cornerRadius: 5))
-                    .offset(x: 42 + CGFloat(segment.day) * dayWidth + 2, y: segment.startMinute / 60 * hourHeight)
-                    .accessibilityLabel(segment.occurrence.title)
-            }
-            if store.visibleFrom <= Date(), Date() < store.visibleTo {
-                let components = Calendar.current.dateComponents([.weekday, .hour, .minute], from: Date())
-                let day = ((components.weekday ?? 2) + 5) % 7
-                Rectangle().fill(.red).frame(width: dayWidth, height: 1)
-                    .offset(x: 42 + CGFloat(day) * dayWidth, y: CGFloat((components.hour ?? 0) * 60 + (components.minute ?? 0)) / 60 * hourHeight)
-            }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: editorBinding(anchor)) { editorContent }
+        .help(occurrence.title)
+    }
+
+    @ViewBuilder private var currentTimeLine: some View {
+        if isVisible, store.visibleFrom <= Date(), Date() < store.visibleTo {
+            TimelineView(.periodic(from: calendar.dateInterval(of: .minute, for: Date())!.end, by: 60)) { context in
+                GeometryReader { geometry in
+                    let dayWidth = max(0, geometry.size.width - 42) / 7
+                    let day = calendar.dateComponents([.day], from: store.visibleFrom, to: calendar.startOfDay(for: context.date)).day ?? 0
+                    let minute = calendar.component(.hour, from: context.date) * 60 + calendar.component(.minute, from: context.date)
+                    Rectangle().fill(.red).frame(width: dayWidth, height: 1)
+                        .offset(x: 42 + CGFloat(day) * dayWidth, y: CGFloat(minute) / 60 * hourHeight)
+                }
+            }.allowsHitTesting(false)
         }
     }
 
-    private var initialHour: Int {
-        store.visibleFrom <= Date() && Date() < store.visibleTo ? max(0, Calendar.current.component(.hour, from: Date()) - 1) : 8
+    private func updatePlacements() {
+        let segments = store.occurrences.flatMap {
+            SchedulerWeekLayout.segments(for: $0, weekStart: store.visibleFrom, calendar: calendar)
+        }
+        placements = SchedulerWeekLayout.placements(segments, minimumMinutes: 22 / hourHeight * 60)
     }
 
+    private func afterDiscarding(_ action: @escaping () -> Void) {
+        if editorForm?.hasChanges == true { pendingDiscardAction = action }
+        else { action() }
+    }
+
+    private func navigateToWeek(_ date: Date) {
+        afterDiscarding {
+            draft = nil; editorForm = nil
+            store.showWeek(containing: date)
+        }
+    }
+
+    private func editorBinding(_ anchor: String) -> Binding<Bool> {
+        Binding(get: { draft != nil && editorAnchor == anchor }, set: { if !$0 { draft = nil } })
+    }
+
+    private var initialHour: Int { calendar.isDate(Date(), equalTo: store.visibleFrom, toGranularity: .weekOfYear) ? max(0, calendar.component(.hour, from: Date()) - 1) : 8 }
+    private func date(_ day: Int) -> Date { calendar.date(byAdding: .day, value: day, to: store.visibleFrom)! }
+    private func shiftWeek(_ offset: Int) { navigateToWeek( calendar.date(byAdding: .weekOfYear, value: offset, to: store.visibleFrom)!) }
     private func allDayOccurrences(day: Int) -> [SchedulerOccurrence] {
-        let date = Calendar.current.date(byAdding: .day, value: day, to: store.visibleFrom)!
+        let start = date(day), end = date(day + 1)
         return store.occurrences.filter {
-            guard case let .allDay(start, end) = $0.time, let s=start.date(in: .current), let e=end.date(in: .current) else { return false }
-            return s < date.addingTimeInterval(86_400) && e > date
+            guard case let .allDay(first, last) = $0.time, let first = first.date(in: calendar.timeZone), let last = last.date(in: calendar.timeZone) else { return false }
+            return first < end && last > start
+        }
+    }
+    private func select(_ occurrence: SchedulerOccurrence) {
+        if occurrence.recurring { scopeOccurrence = occurrence }
+        else { open(occurrence, scope: nil) }
+    }
+    private func open(_ occurrence: SchedulerOccurrence, scope: SchedulerMutationScope?) {
+        if editorForm?.original.id == occurrence.eventID && occurrenceKey == (occurrence.recurring ? occurrence.originalKey : nil) && mutationScope == scope {
+            finishOpen(occurrence, scope: scope)
+        } else {
+            afterDiscarding { finishOpen(occurrence, scope: scope) }
         }
     }
 
-    private func timedSegments() -> [SchedulerTimedSegment] {
-        store.occurrences.flatMap { SchedulerWeekLayout.segments(for: $0, weekStart: store.visibleFrom, calendar: .current) }
+    private func finishOpen(_ occurrence: SchedulerOccurrence, scope: SchedulerMutationScope?) {
+        editingExisting = true
+        guard var event = store.events.first(where: { $0.id == occurrence.eventID }) else { return }
+        if scope != .all {
+            event.time = occurrence.time; event.title = occurrence.title
+            event.notes = occurrence.notes; event.location = occurrence.location; event.colorHex = occurrence.colorHex
+        }
+        if editorForm?.original.id != event.id || occurrenceKey != (occurrence.recurring ? occurrence.originalKey : nil) || mutationScope != scope {
+            editorForm = SchedulerEditorDraft(event: event, allowsRecurrenceEditing: scope != .this)
+        }
+        occurrenceKey = occurrence.recurring ? occurrence.originalKey : nil
+        mutationScope = scope; errorMessage = nil; scopeOccurrence = nil; needsRefresh = false; draft = event
     }
-
-    private func open(_ occurrence: SchedulerOccurrence) {
-        draft = store.events.first(where: { $0.id == occurrence.eventID })
-    }
-
     private func createTimed(day: Int, minute: Int) {
-        let dayStart = Calendar.current.date(byAdding: .day, value: day, to: store.visibleFrom)!
-        let start = Calendar.current.date(byAdding: .minute, value: minute, to: dayStart)!
-        draft = try? SchedulerEvent(
-            title: "新日程",
-            colorHex: PeekerPresetColor.lakeBlue.rawValue,
-            time: .timed(
-                startMilliseconds: Int64(start.timeIntervalSince1970 * 1000),
-                endMilliseconds: Int64(start.addingTimeInterval(1_800).timeIntervalSince1970 * 1000),
-                timeZoneID: TimeZone.current.identifier
-            )
-        )
+        afterDiscarding { createTimedDraft(day: day, minute: minute) }
     }
 
+    private func createTimedDraft(day: Int, minute: Int) {
+        editingExisting = false
+        var components = calendar.dateComponents([.year, .month, .day], from: date(day))
+        components.hour = minute / 60; components.minute = minute % 60
+        guard let start = calendar.date(from: components), calendar.component(.hour, from: start) == minute / 60 else { return }
+        editorAnchor = "new"
+        occurrenceKey = nil; mutationScope = nil; errorMessage = nil
+        draft = try? SchedulerEvent(title: L10n.text("新日程"), colorHex: PeekerPresetColor.lakeBlue.rawValue,
+            time: .timed(startMilliseconds: Int64(start.timeIntervalSince1970 * 1000), endMilliseconds: Int64(start.addingTimeInterval(1800).timeIntervalSince1970 * 1000), timeZoneID: TimeZone.current.identifier))
+        if let draft { editorForm = SchedulerEditorDraft(event: draft, allowsRecurrenceEditing: true) }
+    }
     private func createAllDay(day: Int) {
-        let date = Calendar.current.date(byAdding: .day, value: day, to: store.visibleFrom)!
-        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
-        guard let start = try? SchedulerLocalDate(year: components.year!, month: components.month!, day: components.day!),
-              let end = start.adding(days: 1, in: .current) else { return }
-        draft = try? SchedulerEvent(
-            title: "新日程",
-            colorHex: PeekerPresetColor.lakeBlue.rawValue,
-            time: .allDay(start: start, endExclusive: end)
-        )
+        afterDiscarding { createAllDayDraft(day: day) }
     }
-}
 
-public struct SchedulerTimedSegment: Identifiable, Equatable {
-    public let occurrence: SchedulerOccurrence
-    public let day: Int
-    public let startMinute: CGFloat
-    public let durationMinutes: CGFloat
-    public var id: String { "\(occurrence.id):\(day):\(startMinute)" }
-}
-
-public enum SchedulerWeekLayout {
-    public static func segments(for occurrence: SchedulerOccurrence, weekStart: Date, calendar: Calendar) -> [SchedulerTimedSegment] {
-        guard case let .timed(startMS, endMS, _) = occurrence.time else { return [] }
-        let start=Date(timeIntervalSince1970: Double(startMS)/1000), end=Date(timeIntervalSince1970: Double(endMS)/1000)
-        var output:[SchedulerTimedSegment]=[]
-        for day in 0..<7 {
-            let dayStart=calendar.date(byAdding: .day, value: day, to: weekStart)!, dayEnd=calendar.date(byAdding: .day, value: 1, to: dayStart)!
-            let visibleStart=max(start,dayStart), visibleEnd=min(end,dayEnd)
-            guard visibleEnd > visibleStart else { continue }
-            let startMinute=CGFloat(visibleStart.timeIntervalSince(dayStart)/60)
-            output.append(.init(occurrence: occurrence, day: day, startMinute: startMinute, durationMinutes: CGFloat(visibleEnd.timeIntervalSince(visibleStart)/60)))
-        }
-        return output
+    private func createAllDayDraft(day: Int) {
+        editingExisting = false
+        let parts = calendar.dateComponents([.year, .month, .day], from: date(day))
+        guard let start = try? SchedulerLocalDate(year: parts.year!, month: parts.month!, day: parts.day!),
+              let end = start.adding(days: 1, in: calendar.timeZone) else { return }
+        editorAnchor = "new"
+        occurrenceKey = nil; mutationScope = nil; errorMessage = nil
+        draft = try? SchedulerEvent(title: L10n.text("新日程"), colorHex: PeekerPresetColor.lakeBlue.rawValue, time: .allDay(start: start, endExclusive: end))
+        if let draft { editorForm = SchedulerEditorDraft(event: draft, allowsRecurrenceEditing: true) }
     }
 }
 
 private struct SchedulerEventEditor: View {
-    let original: SchedulerEvent
+    @Bindable var form: SchedulerEditorDraft
+    let errorMessage: String?
+    let isSaving: Bool
+    let canSave: Bool
     let onCancel: () -> Void
     let onSave: (SchedulerEvent) -> Void
     let onDelete: (() -> Void)?
-    @State private var title: String
-    @State private var notes: String
-    @State private var location: String
-    @State private var color: String
-    @State private var timeDraft: SchedulerEventTimeFormDraft
-    @State private var frequency: String
-    @State private var interval: Int
-
-    init(event: SchedulerEvent, onCancel: @escaping () -> Void, onSave: @escaping (SchedulerEvent) -> Void, onDelete: (() -> Void)?) {
-        original=event; self.onCancel=onCancel; self.onSave=onSave; self.onDelete=onDelete
-        _title=State(initialValue:event.title); _notes=State(initialValue:event.notes ?? ""); _location=State(initialValue:event.location ?? "")
-        _color=State(initialValue:event.colorHex); _timeDraft=State(initialValue:SchedulerEventTimeFormDraft(time:event.time))
-        _frequency=State(initialValue:event.recurrence?.frequency.rawValue ?? "none")
-        _interval=State(initialValue:event.recurrence?.interval ?? 1)
-    }
 
     var body: some View {
         Form {
-            if original.sourceID != nil {
-                Text("导入日程的本地修改会在下次来源刷新时被覆盖。")
+            if form.original.sourceID != nil {
+                Text(L10n.text("导入日程的本地修改会在下次来源刷新时被覆盖。"))
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
             TextField(
-                "标题",
-                text: $title,
-                prompt: Text("标题").foregroundStyle(.secondary)
+                L10n.text("标题"),
+                text: $form.title,
+                prompt: Text(L10n.text("标题")).foregroundStyle(.secondary)
             )
-            .foregroundStyle(Color.black)
-            Toggle("全天", isOn: $timeDraft.allDay)
-                .foregroundStyle(Color.black)
+            .foregroundStyle(.primary)
+            Toggle(L10n.text("全天"), isOn: $form.timeDraft.allDay)
+                .foregroundStyle(.primary)
             SchedulerDateTimeInputRow(
-                title: "开始",
-                draft: $timeDraft.start,
-                includesTime: !timeDraft.allDay
+                title: L10n.text("开始"),
+                draft: $form.timeDraft.start,
+                includesTime: !form.timeDraft.allDay
             )
             SchedulerDateTimeInputRow(
-                title: "结束",
-                draft: $timeDraft.end,
-                includesTime: !timeDraft.allDay
+                title: L10n.text("结束"),
+                draft: $form.timeDraft.end,
+                includesTime: !form.timeDraft.allDay
             )
             TextField(
-                "备注",
-                text: $notes,
-                prompt: Text("备注").foregroundStyle(.secondary),
+                L10n.text("备注"),
+                text: $form.notes,
+                prompt: Text(L10n.text("备注")).foregroundStyle(.secondary),
                 axis: .vertical
             )
-            .foregroundStyle(Color.black)
+            .foregroundStyle(.primary)
             TextField(
-                "地点",
-                text: $location,
-                prompt: Text("地点").foregroundStyle(.secondary)
+                L10n.text("地点"),
+                text: $form.location,
+                prompt: Text(L10n.text("地点")).foregroundStyle(.secondary)
             )
-            .foregroundStyle(Color.black)
-            SchedulerPresetColorPicker(colorHex: $color)
-            Picker("重复", selection: $frequency) {
-                Text("无").tag("none")
+            .foregroundStyle(.primary)
+            SchedulerPresetColorPicker(colorHex: $form.color)
+            Picker(L10n.text("重复"), selection: $form.frequency) {
+                Text(L10n.text("无")).tag("none")
                 ForEach(SchedulerFrequency.allCases, id: \.rawValue) {
-                    Text($0.rawValue).tag($0.rawValue)
+                    Text(L10n.text($0.rawValue)).tag($0.rawValue)
                 }
             }
-            .foregroundStyle(Color.black)
-            if frequency != "none" {
-                Stepper("间隔：\(interval)", value: $interval, in: 1...365)
-                    .foregroundStyle(Color.black)
+            .foregroundStyle(.primary)
+            .disabled(!form.allowsRecurrenceEditing)
+            if form.frequency != "none" {
+                Stepper(L10n.text("间隔：%1$@", String(describing: form.interval)), value: $form.interval, in: 1...365)
+                    .foregroundStyle(.primary)
             }
-            if timeDraft.resolvedTime() == nil {
-                Text("请输入真实有效的日期和时间，并确保结束晚于开始。")
+            if form.timeDraft.resolvedTime() == nil {
+                Text(L10n.text("请输入真实有效的日期和时间，并确保结束晚于开始。"))
                     .foregroundStyle(.red)
                     .font(.caption)
             }
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
-                if let onDelete { Button("删除", role: .destructive, action: onDelete) }
+                if let onDelete { Button(L10n.text("删除"), role: .destructive, action: onDelete) }
                 Spacer()
-                Button("取消", action: onCancel)
-                Button("保存", action: save)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(updatedEvent == nil)
+                Button(L10n.text("取消"), action: onCancel)
+                Button(L10n.text("保存"), action: save)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(form.updatedEvent == nil || isSaving || !canSave)
             }
         }
-        .foregroundStyle(Color.black)
-        .foregroundColor(.black)
+        .foregroundStyle(.primary)
+
+        .disabled(isSaving)
         .padding(16)
         .frame(width: 420)
     }
 
-    private var updatedEvent: SchedulerEvent? {
-        guard let time = timeDraft.resolvedTime() else { return nil }
-        let recurrence: SchedulerRecurrence?
-        if frequency == "none" {
-            recurrence = nil
-        } else {
-            guard let frequency = SchedulerFrequency(rawValue: frequency),
-                  let value = try? SchedulerRecurrence(frequency: frequency, interval: interval) else {
-                return nil
-            }
-            recurrence = value
-        }
-        return try? SchedulerEvent(
-            id: original.id,
-            sourceID: original.sourceID,
-            sourceUID: original.sourceUID,
-            sourceSegmentKey: original.sourceSegmentKey,
-            title: title,
-            notes: notes.isEmpty ? nil : notes,
-            location: location.isEmpty ? nil : location,
-            colorHex: color,
-            time: time,
-            recurrence: recurrence,
-            createdAtMilliseconds: original.createdAtMilliseconds,
-            updatedAtMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000)
-        )
-    }
-
     private func save() {
-        guard let updatedEvent else { return }
+        guard let updatedEvent = form.updatedEvent else { return }
         onSave(updatedEvent)
     }
 }
@@ -385,31 +499,31 @@ private struct SchedulerDateTimeInputRow: View {
         LabeledContent(title) {
             HStack(spacing: 8) {
                 SchedulerTimeComponentField(
-                    unit: "月",
+                    unit: L10n.text("月"),
                     placeholder: "MM",
                     value: $draft.month
                 )
                 SchedulerTimeComponentField(
-                    unit: "日",
+                    unit: L10n.text("日"),
                     placeholder: "DD",
                     value: $draft.day
                 )
                 if includesTime {
                     SchedulerTimeComponentField(
-                        unit: "时",
+                        unit: L10n.text("时"),
                         placeholder: "HH",
                         value: $draft.hour
                     )
                     SchedulerTimeComponentField(
-                        unit: "分",
+                        unit: L10n.text("分"),
                         placeholder: "mm",
                         value: $draft.minute
                     )
                 }
             }
         }
-        .foregroundStyle(Color.black)
-        .foregroundColor(.black)
+        .foregroundStyle(.primary)
+
     }
 }
 
@@ -429,14 +543,14 @@ private struct SchedulerTimeComponentField: View {
             .textFieldStyle(.roundedBorder)
             .multilineTextAlignment(.center)
             .font(.body.monospacedDigit())
-            .foregroundStyle(Color.black)
-            .foregroundColor(.black)
+            .foregroundStyle(.primary)
+
             .frame(width: 46)
             .accessibilityLabel(unit)
 
             Text(unit)
                 .font(.caption2)
-                .foregroundStyle(Color.black.opacity(0.7))
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -446,7 +560,7 @@ private struct SchedulerPresetColorPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("颜色")
+            Text(L10n.text("颜色"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -456,7 +570,7 @@ private struct SchedulerPresetColorPicker: View {
                         Circle()
                             .fill(Color(hex: colorHex))
                             .frame(width: 18, height: 18)
-                        Text("当前颜色")
+                        Text(L10n.text("当前颜色"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -478,16 +592,16 @@ private struct SchedulerPresetColorPicker: View {
                                 )
                             if isSelected {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.system(size: 11, weight: .bold))
                                     .foregroundStyle(.white)
                             }
                         }
                         .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
-                    .help(preset.localizedName)
-                    .accessibilityLabel(preset.localizedName)
-                    .accessibilityValue(isSelected ? "已选择" : "未选择")
+                    .help(L10n.text(preset.localizedName))
+                    .accessibilityLabel(L10n.text(preset.localizedName))
+                    .accessibilityValue(isSelected ? L10n.text("已选择") : L10n.text("未选择"))
                 }
             }
         }
@@ -502,18 +616,19 @@ private struct SchedulerPresetColorPicker: View {
 
 private struct SchedulerSettingsView: View {
     @Bindable var store: SchedulerStore
+    @State private var failure: LocalizedMessage?
 
     var body: some View {
         Form {
-            Picker("提前提醒", selection: Binding(
+            Picker(L10n.text("提前提醒"), selection: Binding(
                 get: { store.reminderMinutes ?? 0 },
-                set: { value in Task { try? await store.setReminder(minutes: value == 0 ? nil : value) } }
+                set: { value in perform { try await store.setReminder(minutes: value == 0 ? nil : value) } }
             )) {
-                Text("关闭").tag(0)
-                ForEach(1...60, id: \.self) { Text("\($0) 分钟").tag($0) }
+                Text(L10n.text("关闭")).tag(0)
+                ForEach(1...60, id: \.self) { Text(L10n.text("minute_count", $0)).tag($0) }
             }
-            Section("ICS 来源") {
-                Button("导入 ICS…") { importICS() }
+            Section(L10n.text("ICS 来源")) {
+                Button(L10n.text("导入 ICS…")) { importICS() }
                 ForEach(store.sources) { source in
                     HStack {
                         VStack(alignment: .leading) {
@@ -521,19 +636,29 @@ private struct SchedulerSettingsView: View {
                             Text(source.canonicalPath).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer()
-                        Button("刷新") { Task { _ = try? await store.importICS(fileURL: URL(fileURLWithPath: source.canonicalPath), sourceID: source.id) } }
-                        Button("移除", role: .destructive) { Task { _ = try? await store.removeSource(id: source.id) } }
+                        Button(L10n.text("刷新")) { perform { _ = try await store.importICS(fileURL: URL(fileURLWithPath: source.canonicalPath), sourceID: source.id) } }
+                        Button(L10n.text("移除"), role: .destructive) { perform { _ = try await store.removeSource(id: source.id) } }
                     }
                 }
             }
         }
         .formStyle(.grouped)
+        .safeAreaInset(edge: .bottom) {
+            if let failure { Text(failure.resolve()).foregroundStyle(.red).textSelection(.enabled).padding() }
+        }
+    }
+
+    private func perform(_ operation: @escaping () async throws -> Void) {
+        Task {
+            do { try await operation(); failure = nil }
+            catch { failure = L10n.message("操作失败：%1$@", error.localizedDescription) }
+        }
     }
 
     private func importICS() {
         let panel=NSOpenPanel(); panel.allowedContentTypes=[]; panel.allowsMultipleSelection=false; panel.canChooseDirectories=false
         guard panel.runModal() == .OK, let url=panel.url else { return }
-        Task { _ = try? await store.importICS(fileURL: url) }
+        perform { _ = try await store.importICS(fileURL: url) }
     }
 }
 

@@ -11,7 +11,9 @@ public final class SchedulerStore {
     public private(set) var sources: [SchedulerSource] = []
     public private(set) var warnings: [SchedulerImportWarning] = []
     public private(set) var isLoading = false
-    public private(set) var errorMessage: String?
+    private var localizedError: LocalizedMessage?
+    public var errorMessage: String? { localizedError?.diagnosticDescription }
+    public var localizedErrorMessage: String? { localizedError?.resolve() }
     public private(set) var visibleFrom: Date
     public private(set) var visibleTo: Date
     public var reminderMinutes: Int?
@@ -64,8 +66,8 @@ public final class SchedulerStore {
             sources = try await repository.sources()
             publishVisibleOccurrences()
             await scheduleNextReminder(now: Date())
-            errorMessage = nil
-        } catch { errorMessage = "Scheduler 无法载入：\(error.localizedDescription)" }
+            localizedError = nil
+        } catch { localizedError = L10n.message("Scheduler 无法载入：%1$@", String(describing: error.localizedDescription)) }
     }
 
     public func showWeek(containing date: Date) {
@@ -203,10 +205,21 @@ public final class SchedulerStore {
 
     public func temporalContextChanged() async { publishVisibleOccurrences(); await scheduleNextReminder(now: Date()) }
 
+    public func refreshAfterCommit() async throws {
+        try await withMutation { try await reloadAfterMutation() }
+    }
+
     private func reloadAfterMutation() async throws {
         scheduledTokens.forEach(revokePrompt); scheduledTokens.removeAll()
-        snapshot = try await repository.snapshot(); events=snapshot.events; sources=try await repository.sources()
-        publishVisibleOccurrences(); await scheduleNextReminder(now: Date())
+        do {
+            snapshot = try await repository.snapshot()
+            events = snapshot.events
+            sources = try await repository.sources()
+            publishVisibleOccurrences()
+            await scheduleNextReminder(now: Date())
+        } catch {
+            throw SchedulerPostCommitRefreshError(cause: error)
+        }
     }
 
     private func publishVisibleOccurrences() {
@@ -238,9 +251,12 @@ public final class SchedulerStore {
         for occurrence in due {
             let token = "scheduler:\(occurrence.eventID.uuidString):\(occurrence.originalKey)"
             scheduledTokens.insert(token)
+            guard case let .timed(start, _, _) = occurrence.time else { continue }
+            let message = LocalizedMessage("日程临近：%1$@ · %2$@", bundle: L10n.resourceBundle,
+                arguments: [.text(occurrence.title), .time(Date(timeIntervalSince1970: Double(start) / 1000))])
             publishPrompt(FunctionCardPrompt(
                 token: token, sourceID: .scheduler, systemImage: "calendar",
-                moduleName: "Scheduler", summary: "\(occurrence.title) · \(localStart(occurrence.time))"
+                moduleName: "Scheduler", summary: "\(occurrence.title) · \(localStart(occurrence.time))", message: message, style: .attention
             ))
         }
         await scheduleNextReminder(now: trigger.addingTimeInterval(1))
@@ -296,4 +312,11 @@ private actor SchedulerMutationGate {
     private var locked=false; private var waiters:[CheckedContinuation<Void,Never>]=[]
     func lock() async { if !locked { locked=true; return }; await withCheckedContinuation { waiters.append($0) } }
     func unlock() { if waiters.isEmpty { locked=false } else { waiters.removeFirst().resume() } }
+}
+
+public struct SchedulerPostCommitRefreshError: LocalizedError {
+    public let cause: any Error
+    public var errorDescription: String? {
+        "The change was saved, but the view could not refresh. Refresh before making another change. \(cause.localizedDescription)"
+    }
 }

@@ -27,6 +27,7 @@ public struct CardPreferenceSnapshot: Equatable, Sendable {
 @MainActor
 public final class AppPreferences {
     private enum Key {
+        static let language = "appLanguage"
         static let targetScreen = "targetScreenID"
         static let enabledCards = "enabledCardIDs"
         static let cardOrder = "cardOrder"
@@ -42,6 +43,11 @@ public final class AppPreferences {
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+    }
+
+    public var language: AppLanguage {
+        get { AppLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .system }
+        set { defaults.set(newValue.rawValue, forKey: Key.language) }
     }
 
     public var targetScreenID: String? {

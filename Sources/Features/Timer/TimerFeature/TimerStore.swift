@@ -15,7 +15,9 @@ public final class TimerStore {
     public private(set) var dayState: TimerDayState?
     public private(set) var snapshots: [TimerDailySnapshot] = []
     public private(set) var isLoading = false
-    public private(set) var errorMessage: String?
+    private var localizedError: LocalizedMessage?
+    public var errorMessage: String? { localizedError?.diagnosticDescription }
+    public var localizedErrorMessage: String? { localizedError?.resolve() }
     public var refreshTime: RefreshTime
     public var statisticsMode: TimerStatisticsMode
     public var temporaryTasksEnabled: Bool
@@ -83,9 +85,9 @@ public final class TimerStore {
             try await recoverThroughNow(allowPrompt: false)
             try await reloadSnapshots(for: clock.now())
             await scheduleEvents()
-            errorMessage = nil
+            localizedError = nil
         } catch {
-            errorMessage = "Timer 无法载入：\(error.localizedDescription)"
+            localizedError = L10n.message("Timer 无法载入：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -121,9 +123,9 @@ public final class TimerStore {
             if let current = dayState {
                 dayState = try await repository.loadOrCreateDay(current.businessDay)
             }
-            errorMessage = nil
+            localizedError = nil
         } catch {
-            errorMessage = "无法创建计时任务：\(error.localizedDescription)"
+            localizedError = L10n.message("无法创建计时任务：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -156,11 +158,11 @@ public final class TimerStore {
             dayState?.updateTemplate(template)
             if let state = dayState { try await repository.saveDay(state) }
             await scheduleEvents()
-            errorMessage = nil
+            localizedError = nil
         } catch {
             templates = oldTemplates
             dayState = oldState
-            errorMessage = "无法保存计时任务：\(error.localizedDescription)"
+            localizedError = L10n.message("无法保存计时任务：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -183,11 +185,11 @@ public final class TimerStore {
             try await repository.deleteTemplate(id: id)
             templates.removeAll { $0.id == id }
             dayState?.tasks.removeAll { $0.templateID == id }
-            errorMessage = nil
+            localizedError = nil
         } catch {
             templates = oldTemplates
             dayState = oldState
-            errorMessage = "无法删除计时任务：\(error.localizedDescription)"
+            localizedError = L10n.message("无法删除计时任务：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -217,7 +219,7 @@ public final class TimerStore {
             if let state = dayState { try await repository.saveDay(state) }
         } catch {
             templates = old
-            errorMessage = "无法保存任务顺序：\(error.localizedDescription)"
+            localizedError = L10n.message("无法保存任务顺序：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -244,7 +246,7 @@ public final class TimerStore {
             )
             try await repository.saveTemporaryTask(task)
             dayState?.temporaryTasks.append(task)
-            errorMessage = nil
+            localizedError = nil
             return task
         }
     }
@@ -286,7 +288,7 @@ public final class TimerStore {
             state.updateTemporaryTask(updated)
             dayState = state
             await scheduleEvents()
-            errorMessage = nil
+            localizedError = nil
             return updated
         }
     }
@@ -315,7 +317,7 @@ public final class TimerStore {
             state.temporaryTasks.removeAll { $0.id == id }
             dayState = state
             await scheduleEvents()
-            errorMessage = nil
+            localizedError = nil
             return task
         }
     }
@@ -330,7 +332,7 @@ public final class TimerStore {
             else { throw TimerDomainError.taskNotFound }
             try await repository.commitTemporaryStart(state: state, task: task, session: session)
             dayState = state
-            errorMessage = nil
+            localizedError = nil
             await scheduleEvents()
         }
     }
@@ -347,10 +349,10 @@ public final class TimerStore {
             guard let session = state.activeSession else { return }
             try await repository.commitStart(state: state, session: session)
             dayState = state
-            errorMessage = nil
+            localizedError = nil
             await scheduleEvents()
         } catch {
-            errorMessage = "无法开始计时：\(error.localizedDescription)"
+            localizedError = L10n.message("无法开始计时：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -375,10 +377,10 @@ public final class TimerStore {
                 try await repository.commitCompletion(state: state, completion: completion)
             }
             dayState = state
-            errorMessage = nil
+            localizedError = nil
             await scheduleEvents()
         } catch {
-            errorMessage = "无法暂停计时：\(error.localizedDescription)"
+            localizedError = L10n.message("无法暂停计时：%1$@", String(describing: error.localizedDescription))
             throw error
         }
     }
@@ -438,9 +440,9 @@ public final class TimerStore {
             self.refreshTime = refreshTime
             onRefreshTimeChanged(refreshTime)
             await scheduleEvents()
-            errorMessage = nil
+            localizedError = nil
         } catch {
-            errorMessage = "Timer 无法更新刷新时间：\(error.localizedDescription)"
+            localizedError = L10n.message("Timer 无法更新刷新时间：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -455,7 +457,7 @@ public final class TimerStore {
         } catch is CancellationError {
             return
         } catch {
-            errorMessage = "Timer 月历无法载入：\(error.localizedDescription)"
+            localizedError = L10n.message("Timer 月历无法载入：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -472,7 +474,7 @@ public final class TimerStore {
             try await recoverThroughNow(allowPrompt: reason == .scheduled)
             await scheduleEvents()
         } catch {
-            errorMessage = "Timer 恢复失败：\(error.localizedDescription)"
+            localizedError = L10n.message("Timer 恢复失败：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -611,7 +613,7 @@ public final class TimerStore {
             await scheduleEvents()
         } catch {
             await scheduleEvents()
-            errorMessage = "Timer 跨日恢复失败：\(error.localizedDescription)"
+            localizedError = L10n.message("Timer 跨日恢复失败：%1$@", String(describing: error.localizedDescription))
             throw error
         }
     }

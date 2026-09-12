@@ -24,7 +24,7 @@ if grep -Eq -- 'vendor-lucide|curl|wget|git clone' "$ROOT_DIR/scripts/build-app.
 fi
 grep -q -- 'LICENSE-ISC.txt' "$ROOT_DIR/scripts/verify-bundle.sh"
 grep -q -- 'LICENSE-MIT.txt' "$ROOT_DIR/scripts/verify-bundle.sh"
-grep -q -- '2.1.0' "$ROOT_DIR/Resources/Info.plist"
-grep -q -- '<string>3</string>' "$ROOT_DIR/Resources/Info.plist"
+grep -q -- '2.1.1' "$ROOT_DIR/Resources/Info.plist"
+grep -q -- '<string>4</string>' "$ROOT_DIR/Resources/Info.plist"
 
 echo "release script contract passed"

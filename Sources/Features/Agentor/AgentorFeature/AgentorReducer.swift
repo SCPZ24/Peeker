@@ -143,7 +143,7 @@ public struct AgentorReducer: Sendable, Equatable {
         if event.name == .questionResolved || event.name == .writebackSucceeded || event.name == .writebackFailed {
             guard let requestID = event.requestID else { return [] }
             let wasFailure = event.name == .writebackFailed
-            let effects = resolveRequest(requestID, upstream: event.name != .writebackSucceeded)
+            let effects = resolveRequest(requestID, upstream: event.name == .questionResolved)
             if wasFailure { return effects + [.writebackFailed(key, requestID)] }
             return effects
         }

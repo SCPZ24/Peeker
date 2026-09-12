@@ -4,6 +4,7 @@ import PeekerCore
 public struct IslandRootView: View {
     @Bindable private var coordinator: IslandCoordinator
     @Bindable private var displayContext: IslandDisplayContext
+    @Environment(\.colorScheme) private var systemColorScheme
     private let openSettings: () -> Void
 
     public init(
@@ -24,6 +25,7 @@ public struct IslandRootView: View {
         ZStack(alignment: .top) {
             ZStack {
                 expandedContent
+                    .environment(\.isVisualActivityEnabled, coordinator.isExpanded && coordinator.isVisualActivityEnabled)
                     .opacity(IslandContentTransition.expandedOpacity(
                         expansion: displayContext.expansionTarget,
                         isResting: isResting
@@ -32,6 +34,7 @@ public struct IslandRootView: View {
                     .accessibilityHidden(!interactivity.expandedAllowsHitTesting)
 
                 collapsedContent(surface)
+                    .environment(\.isVisualActivityEnabled, !coordinator.isExpanded && coordinator.isVisualActivityEnabled)
                     .opacity(1 - displayContext.expansionTarget)
                     .allowsHitTesting(interactivity.compactAllowsHitTesting)
                     .accessibilityHidden(!interactivity.compactAllowsHitTesting)
@@ -42,7 +45,9 @@ public struct IslandRootView: View {
             }
             .background(displayContext.drawsBlackSurface ? Color.black : Color.clear)
             .clipShape(surfaceShape)
-            .foregroundStyle(.white)
+            .environment(\.nativePresentationColorScheme, systemColorScheme)
+            .environment(\.colorScheme, .dark)
+            .foregroundStyle(.primary)
             .contentShape(Rectangle())
             .onHover { hovering in
                 if hovering { coordinator.pointerEntered() }
@@ -58,7 +63,7 @@ public struct IslandRootView: View {
     private func collapsedContent(_ surface: IslandSurfaceDescription) -> some View {
         switch surface {
         case .resting:
-            Color.clear.accessibilityLabel("打开 Peeker")
+            Color.clear.accessibilityLabel(L10n.text("打开 Peeker"))
         case .compact:
             compactContent
         case let .prompt(prompt):
@@ -100,20 +105,27 @@ public struct IslandRootView: View {
     }
 
     private func promptContent(_ prompt: FunctionCardPrompt) -> some View {
+        Button { coordinator.openCurrentPrompt() } label: {
         HStack(spacing: 10) {
             FunctionCardPromptGlyph(
                 prompt: prompt,
+                displayedAt: coordinator.promptCenter.displayedAt,
                 manifest: coordinator.registry.registrations.first(where: { $0.id == prompt.sourceID })?.iconManifest
             )
             VStack(alignment: .leading, spacing: 2) {
                 Text(prompt.moduleName).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Text(prompt.summary).font(.subheadline).lineLimit(1).truncationMode(.tail)
+                Text(prompt.message?.resolve() ?? prompt.summary).font(.subheadline).lineLimit(1).truncationMode(.tail)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 18)
-        .padding(.top, displayContext.physicalNotchSize == nil ? 4 : displayContext.physicalNotchSize!.height)
+        .padding(.top, coordinator.isExpanded ? 0 : (displayContext.physicalNotchSize?.height ?? 4))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .buttonStyle(.plain)
+        .contentShape(Rectangle())
+        .onAppear { coordinator.promptCenter.markDisplayed(token: prompt.token) }
+        .onChange(of: prompt.token) { _, token in coordinator.promptCenter.markDisplayed(token: token) }
     }
 
     private var expandedContent: some View {
@@ -143,8 +155,17 @@ public struct IslandRootView: View {
                     Image(systemName: "gearshape.fill").frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("打开设置")
+                .accessibilityLabel(L10n.text("打开设置"))
             }
+
+            Group {
+                if coordinator.isExpanded, let prompt = coordinator.promptCenter.current {
+                    promptContent(prompt)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(height: 40)
 
             coordinator.registry.selectedCard?.makeExpandedView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

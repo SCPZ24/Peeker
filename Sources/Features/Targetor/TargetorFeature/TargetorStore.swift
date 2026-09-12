@@ -12,11 +12,16 @@ public struct TargetorFeedback: Equatable, Sendable {
 @MainActor
 @Observable
 public final class TargetorStore {
+    public var isPresentationVisible = false
+    public var reduceMotion = false
     public private(set) var targets: [TargetorTargetState] = []
     public private(set) var issues: [String] = []
     public private(set) var isLoading = false
-    public private(set) var errorMessage: String?
+    private var localizedError: LocalizedMessage?
+    public var errorMessage: String? { localizedError?.diagnosticDescription }
+    public var localizedErrorMessage: String? { localizedError?.resolve() }
     public private(set) var feedback: TargetorFeedback?
+    public private(set) var calendarRevision = 0
     public var refreshTime: RefreshTime
 
     @ObservationIgnored private let repository: any TargetorRepository
@@ -28,6 +33,8 @@ public final class TargetorStore {
     @ObservationIgnored private let onRefreshTimeChanged: @MainActor (RefreshTime) -> Void
     @ObservationIgnored private let gate = TargetorMutationGate()
     @ObservationIgnored private var feedbackTask: Task<Void, Never>?
+    @ObservationIgnored private var summaryHistoryCache: [UUID: SummaryHistoryEntry] = [:]
+    @ObservationIgnored private var summaryHistoryOrder: [UUID] = []
     private let boundaryKey = TemporalEventKey("targetor.boundary")
 
     public init(
@@ -58,9 +65,9 @@ public final class TargetorStore {
             defer { isLoading = false }
             do {
                 try await recoverAndReload()
-                errorMessage = nil
+                localizedError = nil
             } catch {
-                errorMessage = "Targetor 无法载入：\(error.localizedDescription)"
+                localizedError = L10n.message("Targetor 无法载入：%1$@", String(describing: error.localizedDescription))
             }
         }
     }
@@ -167,7 +174,7 @@ public final class TargetorStore {
     }
 
     @discardableResult
-    public func checkin(targetID: UUID, expectedPeriodID: UUID? = nil) async throws -> TargetorCheckinResult {
+    public func checkin(targetID: UUID, expectedPeriodID: UUID? = nil, fromUI: Bool = false) async throws -> TargetorCheckinResult {
         try await withMutation {
             try await recoverAndReload()
             guard let state = targets.first(where: { $0.id == targetID }),
@@ -177,9 +184,12 @@ public final class TargetorStore {
             let result = try await repository.checkin(
                 targetID: targetID, eventID: UUID(), atMilliseconds: clock.now().millisecondsSince1970
             )
-            try await reload()
-            publishCheckin(result)
-            publishFeedback(result)
+            if let index = targets.firstIndex(where: { $0.id == targetID }) { targets[index] = result.target }
+            localizedError = nil
+            do { try await reload() }
+            catch { localizedError = L10n.message("打卡已保存，刷新失败；请刷新视图，不要重复打卡：%1$@", String(describing: error.localizedDescription)) }
+            if fromUI && isPresentationVisible { publishFeedback(result) }
+            else { publishCheckin(result) }
             return result
         }
     }
@@ -187,11 +197,10 @@ public final class TargetorStore {
     @discardableResult
     func checkinFromUI(targetID: UUID, expectedPeriodID: UUID) async -> Bool {
         do {
-            _ = try await checkin(targetID: targetID, expectedPeriodID: expectedPeriodID)
-            errorMessage = nil
+            _ = try await checkin(targetID: targetID, expectedPeriodID: expectedPeriodID, fromUI: true)
             return true
         } catch {
-            errorMessage = "无法打卡：\(checkinErrorDescription(error))"
+            localizedError = LocalizedMessage("无法打卡：%1$@", bundle: L10n.resourceBundle, arguments: [.message(checkinErrorMessage(error))])
             return false
         }
     }
@@ -259,15 +268,24 @@ public final class TargetorStore {
             guard let from = intervals.map(\.start).min(),
                   let to = intervals.map(\.end).max()
             else { return [] }
-            let allTargets = try await repository.snapshot(scope: .all).targets.map(\.target)
+            let allStates = try await repository.snapshot(scope: .all).targets
+            let allTargets = allStates.map(\.target)
             var periods: [TargetorPeriod] = []
-            for target in allTargets {
-                let history = try await repository.history(
-                    targetID: target.id,
-                    fromMilliseconds: from.millisecondsSince1970,
-                    toMilliseconds: to.millisecondsSince1970
-                )
+            let fromMS = from.millisecondsSince1970, toMS = to.millisecondsSince1970
+            for state in allStates {
+                if let cached = summaryHistoryCache[state.id], cached.state == state,
+                   cached.from == fromMS, cached.to == toMS {
+                    periods.append(contentsOf: cached.periods)
+                    continue
+                }
+                let history = try await repository.history(targetID: state.id, fromMilliseconds: fromMS, toMilliseconds: toMS)
                 periods.append(contentsOf: history.periods)
+                summaryHistoryCache[state.id] = SummaryHistoryEntry(state: state, from: fromMS, to: toMS, periods: history.periods)
+                summaryHistoryOrder.removeAll { $0 == state.id }
+                summaryHistoryOrder.append(state.id)
+                if summaryHistoryOrder.count > 64 {
+                    summaryHistoryCache.removeValue(forKey: summaryHistoryOrder.removeFirst())
+                }
             }
             return TargetorCalendarCalculator.aggregate(
                 dates: dates, now: now, refreshTime: refreshTime,
@@ -308,6 +326,7 @@ public final class TargetorStore {
         try await withMutation {
             try await recoverAndReload()
             refreshTime = value
+            calendarRevision += 1
             onRefreshTimeChanged(value)
             await scheduleBoundary()
         }
@@ -315,11 +334,12 @@ public final class TargetorStore {
 
     public func handleTemporalEvent() async {
         await withMutation {
+            calendarRevision += 1
             do {
                 try await recoverAndReload()
-                errorMessage = nil
+                localizedError = nil
             } catch {
-                errorMessage = "Targetor 周期恢复失败：\(error.localizedDescription)"
+                localizedError = L10n.message("Targetor 周期恢复失败：%1$@", String(describing: error.localizedDescription))
             }
         }
     }
@@ -343,32 +363,34 @@ public final class TargetorStore {
         }
     }
 
-    private func checkinErrorDescription(_ error: Error) -> String {
-        guard let targetorError = error as? TargetorError else { return error.localizedDescription }
+    private func checkinErrorMessage(_ error: Error) -> LocalizedMessage {
+        guard let targetorError = error as? TargetorError else { return L10n.message("%1$@", error.localizedDescription) }
         switch targetorError {
         case .cycleComplete:
-            return "本周期已完成"
+            return L10n.message("本周期已完成")
         case .eventNotCurrent:
-            return "目标周期已更新，请重新拖拽"
+            return L10n.message("目标周期已更新，请重新拖拽")
         case .targetNotFound, .targetArchived:
-            return "目标已不可用"
+            return L10n.message("目标已不可用")
         case .invalidTitle, .invalidIcon, .invalidPeriod, .invalidMaxCount,
              .ambiguousSelector, .eventNotFound, .invalidHistoryRange, .noActualChange:
-            return "请求无效"
+            return L10n.message("请求无效")
         }
     }
 
     private func publishFeedback(_ result: TargetorCheckinResult) {
+        guard result.target.currentPeriod?.state != .notStarted, feedback?.token != result.event.id else { return }
         feedbackTask?.cancel()
         let value = TargetorFeedback(
             targetID: result.target.id,
             state: result.target.currentPeriod?.state ?? .notStarted,
-            token: UUID(),
+            token: result.event.id,
             startedAt: clock.now()
         )
         feedback = value
+        let duration = reduceMotion ? 0.15 : TargetorFeedbackAnimation.duration(for: value.state)
         feedbackTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(TargetorFeedbackAnimation.duration))
+            try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled, self?.feedback?.token == value.token else { return }
             self?.feedback = nil
         }
@@ -394,4 +416,11 @@ private actor TargetorMutationGate {
         if waiters.isEmpty { locked = false }
         else { waiters.removeFirst().resume() }
     }
+}
+
+private struct SummaryHistoryEntry {
+    let state: TargetorTargetState
+    let from: Int64
+    let to: Int64
+    let periods: [TargetorPeriod]
 }

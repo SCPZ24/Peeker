@@ -25,7 +25,10 @@ public struct AgentorModule: FunctionCardModule {
             revokePrompt: context.hostActions.revokePrompt,
             setEditingText: context.hostActions.setEditingText,
             scanIntegrations: { await integrationManager.scan() },
-            performIntegration: { agent, action in try await integrationManager.perform(agent, action: action) },
+            performIntegration: { agent, action in
+                do { try await integrationManager.perform(agent, action: action) }
+                catch let error as AgentorIntegrationError { throw AgentorIntegrationFailure(message: error.localizedMessage) }
+            },
             focusOrigin: { key in await bridge.focus(key) }
         ))
         let runtime = AgentorRuntimeController(store: store)

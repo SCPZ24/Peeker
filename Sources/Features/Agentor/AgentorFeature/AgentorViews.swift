@@ -1,5 +1,6 @@
 import AgentorProtocol
 import FunctionCardKit
+import PeekerCore
 import SwiftUI
 
 @MainActor
@@ -14,7 +15,8 @@ public enum AgentorFeatureFactory {
     )
 
     public static func make(store: AgentorStore) -> FunctionCardRegistration {
-        FunctionCardRegistration(
+        let visualClock = AgentorVisualClock()
+        return FunctionCardRegistration(
             id: .agentor,
             name: "Agentor",
             systemImage: "cpu",
@@ -23,9 +25,9 @@ public enum AgentorFeatureFactory {
             introducedConfigurationVersion: 3,
             metrics: metrics,
             isCompactEligible: { store.activeSessionCount > 0 },
-            makeCompactLeadingView: { AnyView(AgentorCompactLeadingView(store: store)) },
-            makeCompactTrailingView: { AnyView(AgentorCompactTrailingView(store: store)) },
-            makeExpandedView: { AnyView(AgentorExpandedView(store: store)) },
+            makeCompactLeadingView: { AnyView(AgentorCompactLeadingView(store: store, clock: visualClock).modifier(AgentorVisualScope(clock: visualClock, hasSessions: store.activeSessionCount > 0))) },
+            makeCompactTrailingView: { AnyView(AgentorCompactTrailingView(store: store, clock: visualClock).modifier(AgentorVisualScope(clock: visualClock, hasSessions: store.activeSessionCount > 0))) },
+            makeExpandedView: { AnyView(AgentorExpandedView(store: store, clock: visualClock).modifier(AgentorVisualScope(clock: visualClock, hasSessions: store.activeSessionCount > 0))) },
             makeSettingsView: { AnyView(AgentorSettingsView(store: store)) }
         )
     }
@@ -33,104 +35,70 @@ public enum AgentorFeatureFactory {
 
 private struct AgentorCompactLeadingView: View {
     @Bindable var store: AgentorStore
+    let clock: AgentorVisualClock
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
-            let elapsed = timeline.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 7) {
-                if store.activeSessionCount == 1, let session = store.sessions.first {
-                    AgentorLogo(agent: session.key.agent)
-                        .overlay {
-                            Circle()
-                                .trim(from: 0.08, to: 0.42)
-                                .stroke(.white.opacity(0.45), lineWidth: 1)
-                                .rotationEffect(reduceMotion ? .zero : .degrees(elapsed.truncatingRemainder(dividingBy: 1.8) / 1.8 * 360))
-                                .frame(width: 25, height: 25)
-                        }
-                } else if store.activeSessionCount == 2 {
-                    ForEach(Array(store.sessions.prefix(2).enumerated()), id: \.element.key) { index, session in
-                        AgentorLogo(agent: session.key.agent)
-                            .opacity(reduceMotion ? 1 : 0.6 + 0.4 * breathing(elapsed + Double(index) * 0.8))
-                    }
-                } else {
-                    Text("\(store.activeSessionCount)")
-                        .font(.headline.monospacedDigit())
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(.white.opacity(0.16), in: Capsule())
-                }
+        HStack(spacing: 7) {
+            ForEach(store.sessions.prefix(2)) { session in
+                AgentorLogo(agent: session.key.agent)
+                    .opacity(reduceMotion ? 1 : 0.75 + 0.25 * clock.intensity)
+            }
+            if store.activeSessionCount > 2 {
+                Text("\(store.activeSessionCount)").monospacedDigit()
             }
         }
-    }
-
-    private func breathing(_ elapsed: TimeInterval) -> Double {
-        (sin(elapsed / 1.6 * .pi * 2) + 1) / 2
     }
 }
 
 private struct AgentorCompactTrailingView: View {
     @Bindable var store: AgentorStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let clock: AgentorVisualClock
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
-            let elapsed = timeline.date.timeIntervalSinceReferenceDate
-            HStack(spacing: 7) {
-                if store.hasPendingQuestions {
-                    Image(systemName: "questionmark.circle.fill")
-                        .foregroundStyle(.orange)
-                        .overlay {
-                            Circle()
-                                .stroke(.orange.opacity(reduceMotion ? 0.5 : 0.7 * (1 - pulse(elapsed))))
-                                .scaleEffect(reduceMotion ? 1 : 0.8 + pulse(elapsed) * 0.45)
-                        }
-                    Text("等待回答").foregroundStyle(.orange)
-                } else if store.activeSessionCount == 1, let session = store.sessions.first {
-                    Text(session.status.displayName)
-                } else if store.activeSessionCount == 2 {
-                    Text("2").font(.headline.monospacedDigit())
-                } else {
-                    HStack(spacing: 3) {
-                        ForEach(0..<3, id: \.self) { index in
-                            Circle().frame(width: 4, height: 4)
-                                .offset(y: reduceMotion ? 0 : CGFloat(sin((elapsed / 2.4 + Double(index) / 3) * .pi * 2) * 3))
-                        }
-                    }
-                    Text("\(store.activeSessionCount)").monospacedDigit()
-                }
+        HStack(spacing: 7) {
+            if store.hasPendingQuestions {
+                Image(systemName: "questionmark.circle").foregroundStyle(.orange)
+                Text(L10n.text("等待回答"))
+            } else if let session = store.sessions.first {
+                Text(L10n.text(session.status.displayName))
             }
-            .font(.caption.weight(.semibold))
         }
-    }
-
-    private func pulse(_ elapsed: TimeInterval) -> CGFloat {
-        CGFloat(elapsed.truncatingRemainder(dividingBy: 1.2) / 1.2)
+        .font(.system(size: 12, weight: .medium))
     }
 }
 
 private struct AgentorExpandedView: View {
     @Bindable var store: AgentorStore
+    let clock: AgentorVisualClock
 
     var body: some View {
         Group {
-            if store.sessions.isEmpty {
+            if store.sessions.isEmpty && store.retainedDrafts.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "cpu")
                         .font(.title3)
                         .foregroundStyle(.white.opacity(0.85))
-                    Text("没有运行中的 Agent")
+                    Text(L10n.text("没有运行中的 Agent"))
                         .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.white)
-                    Text("Agent 开始执行后会显示在这里。")
+                        .foregroundStyle(.primary)
+                    Text(L10n.text("Agent 开始执行后会显示在这里。"))
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.72))
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
                         ForEach(store.sessions) { session in
-                            AgentorSessionRow(store: store, session: session)
+                            AgentorSessionRow(store: store, session: session, clock: clock)
+                        }
+                        if store.discardedDraftCount > 0 {
+                            Text(L10n.text("已清理最早的 %1$@ 份草稿（保留上限 100）。", String(store.discardedDraftCount)))
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        ForEach(store.retainedDrafts) { pending in
+                            AgentorRetainedDraftView(pending: pending) { store.discardRetainedDraft(pending.id) }
                         }
                     }
                 }
@@ -139,35 +107,65 @@ private struct AgentorExpandedView: View {
     }
 }
 
+private struct AgentorRetainedDraftView: View {
+    let pending: AgentorPendingRequest
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(L10n.text("请求已结束，草稿保留以便复制。"), systemImage: "exclamationmark.circle")
+                .foregroundStyle(.secondary)
+            Text(pending.request.title ?? pending.request.session.agent.displayName).font(.headline)
+            ForEach(pending.request.questions) { question in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(question.body).font(.callout)
+                    Text(answer(for: question)).textSelection(.enabled)
+                }
+            }
+            Button(L10n.text("清除草稿"), action: dismiss)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+    }
+
+    private func answer(for question: AgentorQuestion) -> String {
+        guard let draft = pending.drafts[question.id] else { return "" }
+        if draft.usesOther { return draft.otherText }
+        if question.kind == .text { return draft.text }
+        return question.options.filter { draft.selectedValues.contains($0.wireValue) }.map(\.label).joined(separator: "\n")
+    }
+}
+
 private struct AgentorSessionRow: View {
     @Bindable var store: AgentorStore
     let session: AgentorSessionState
+    let clock: AgentorVisualClock
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 AgentorLogo(agent: session.key.agent)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session.key.agent.displayName).font(.caption).foregroundStyle(.white.opacity(0.72))
-                    Text(session.label).font(.headline).foregroundStyle(.white).lineLimit(1)
+                    Text(session.key.agent.displayName).font(.caption).foregroundStyle(.secondary)
+                    Text(session.label).font(.headline).foregroundStyle(.primary).lineLimit(1)
                 }
                 Spacer()
                 if !session.activeSubagentIDs.isEmpty {
-                    Text("并行子任务 ×\(session.activeSubagentIDs.count)")
-                        .font(.caption2).foregroundStyle(.white.opacity(0.82))
+                    Text(L10n.text("并行子任务 ×%1$@", String(describing: session.activeSubagentIDs.count)))
+                        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.82))
                         .padding(.horizontal, 7).padding(.vertical, 3)
                         .background(.white.opacity(0.12), in: Capsule())
                 }
-                TimelineView(.periodic(from: session.startedAt, by: 1)) { context in
-                    Text(duration(context.date.timeIntervalSince(session.startedAt)))
-                        .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.72))
+                VisualTimeline { date in
+                    Text(duration(date.timeIntervalSince(session.startedAt)))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
-                Text(session.status.displayName)
+                Text(L10n.text(session.status.displayName))
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.white.opacity(0.82))
             }
             if let notice = session.resolutionNotice {
-                Label(notice, systemImage: "checkmark.circle")
+                Label(L10n.text(notice), systemImage: "checkmark.circle")
                     .font(.caption).foregroundStyle(.white.opacity(0.78))
             }
             ForEach(store.pendingRequests(for: session)) { pending in
@@ -179,9 +177,7 @@ private struct AgentorSessionRow: View {
         .overlay {
             AgentorSessionBorder(
                 status: session.status,
-                generation: session.generation,
-                startedAt: session.startedAt,
-                cornerRadius: 12
+                clock: clock
             )
         }
     }
@@ -200,18 +196,22 @@ private struct AgentorQuestionForm: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !pending.isSchemaSafe {
-                Label("问题格式无法安全解析，请在 Agent 中回答。", systemImage: "exclamationmark.triangle")
+                Label(L10n.text("问题格式无法安全解析，请在 Agent 中回答。"), systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
             } else {
-                ForEach(pending.request.questions) { question in
-                    questionView(question)
+                ForEach(Array(pending.request.questions.enumerated()), id: \.element.id) { index, question in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("\(index + 1).").font(.headline)
+                        questionView(question)
+                    }
+                    if index + 1 < pending.request.questions.count { Divider() }
                 }
             }
             HStack {
-                Button("在 Agent 中回答") { store.answerInAgent(requestID: pending.id) }
+                Button(L10n.text("在 Agent 中回答")) { store.answerInAgent(requestID: pending.id) }
                 Spacer()
                 if pending.supportsWriteback, !isImmediateSingleChoice || usesOtherForImmediateChoice {
-                    Button(pending.status == .submitting ? "提交中…" : "提交回答") {
+                    Button(pending.status == .submitting ? L10n.text("提交中…") : L10n.text("提交回答")) {
                         store.submit(requestID: pending.id)
                     }
                     .disabled(!pending.isSubmittable || pending.status == .submitting)
@@ -219,8 +219,7 @@ private struct AgentorQuestionForm: View {
                 }
             }
         }
-        .padding(10)
-        .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 8)
         .onChange(of: focusedQuestionID) { _, value in store.setEditingText(value != nil) }
         .onDisappear { store.setEditingText(false) }
     }
@@ -229,19 +228,27 @@ private struct AgentorQuestionForm: View {
     private func questionView(_ question: AgentorQuestion) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             if let title = question.title { Text(title).font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.78)) }
-            Text(question.body).font(.subheadline).foregroundStyle(.white)
+            Text(question.body).font(.subheadline).foregroundStyle(.primary)
             switch question.kind {
             case .single, .multiple:
-                FlowLayout(spacing: 6) {
+                VStack(alignment: .leading, spacing: 6) {
                     ForEach(question.options) { option in
                         Button {
                             store.selectOption(requestID: pending.id, questionID: question.id, wireValue: option.wireValue)
                         } label: {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(option.label).foregroundStyle(.white)
-                                if let detail = option.detail { Text(detail).font(.caption2).foregroundStyle(.white.opacity(0.72)) }
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: question.kind == .multiple
+                                    ? (isSelected(option.wireValue, questionID: question.id) ? "checkmark.square" : "square")
+                                    : (isSelected(option.wireValue, questionID: question.id) ? "largecircle.fill.circle" : "circle"))
+                                VStack(alignment: .leading, spacing: 3) {
+                                Text(option.label).fixedSize(horizontal: false, vertical: true).foregroundStyle(.primary)
+                                if let detail = option.detail { Text(detail).font(.system(size: 11)).foregroundStyle(.secondary) }
+                                }
+                                Spacer(minLength: 0)
                             }
-                            .padding(.horizontal, 8).padding(.vertical, 5)
+                            .padding(.horizontal, 8).padding(.vertical, 7)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                             .background(isSelected(option.wireValue, questionID: question.id) ? .blue.opacity(0.3) : .white.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
                         }
                         .buttonStyle(.plain)
@@ -249,17 +256,17 @@ private struct AgentorQuestionForm: View {
                     }
                 }
                 if question.allowsOther {
-                    Toggle("Other", isOn: otherBinding(question.id))
+                    Toggle(L10n.text("自定义回答"), isOn: otherBinding(question.id))
                         .disabled(!pending.supportsWriteback || pending.status != .waiting)
                     if draft(question.id).usesOther {
-                        TextField("自定义回答", text: otherTextBinding(question.id))
+                        TextField(L10n.text("自定义回答"), text: otherTextBinding(question.id), axis: .vertical)
                             .textFieldStyle(.roundedBorder)
                             .focused($focusedQuestionID, equals: question.id)
                             .disabled(!pending.supportsWriteback || pending.status != .waiting)
                     }
                 }
             case .text:
-                TextField("输入回答", text: textBinding(question.id), axis: .vertical)
+                TextField(L10n.text("输入回答"), text: textBinding(question.id), axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .focused($focusedQuestionID, equals: question.id)
                     .disabled(!pending.supportsWriteback || pending.status != .waiting)
@@ -293,35 +300,6 @@ private struct AgentorQuestionForm: View {
     private func otherBinding(_ id: String) -> Binding<Bool> { Binding(get: { draft(id).usesOther }, set: { value in updateDraft(id) { $0.usesOther = value; if value { $0.selectedValues.removeAll() } } }) }
 }
 
-private struct FlowLayout: Layout {
-    let spacing: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        layout(proposal: proposal, subviews: subviews).size
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let result = layout(proposal: ProposedViewSize(width: bounds.width, height: proposal.height), subviews: subviews)
-        for (index, point) in result.points.enumerated() {
-            subviews[index].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y), proposal: .unspecified)
-        }
-    }
-
-    private func layout(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, points: [CGPoint]) {
-        let width = proposal.width ?? 600
-        var points: [CGPoint] = []
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
-            points.append(CGPoint(x: x, y: y))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        return (CGSize(width: width, height: y + rowHeight), points)
-    }
-}
-
 private struct AgentorSettingsView: View {
     @Bindable var store: AgentorStore
     @State private var removalAgent: AgentKind?
@@ -330,11 +308,11 @@ private struct AgentorSettingsView: View {
         Form {
             Section {
                 HStack {
-                    Text("Agent 接入")
+                    Text(L10n.text("Agent 接入"))
                     Spacer()
                     Button { Task { await store.refreshIntegrations() } } label: {
                         if store.isScanning { ProgressView().controlSize(.small) }
-                        else { Label("刷新", systemImage: "arrow.clockwise") }
+                        else { Label(L10n.text("刷新"), systemImage: "arrow.clockwise") }
                     }
                     .disabled(store.isScanning || store.operatingAgent != nil)
                 }
@@ -354,16 +332,16 @@ private struct AgentorSettingsView: View {
         }
         .formStyle(.grouped)
         .task { await store.scanIfNeeded() }
-        .confirmationDialog("移除 \(removalAgent?.displayName ?? "Agent") 接入？", isPresented: Binding(
+        .confirmationDialog(L10n.text("移除 %1$@ 接入？", String(describing: removalAgent?.displayName ?? "Agent")), isPresented: Binding(
             get: { removalAgent != nil }, set: { if !$0 { removalAgent = nil } }
         )) {
             if let agent = removalAgent {
-                Button("移除接入", role: .destructive) {
+                Button(L10n.text("移除接入"), role: .destructive) {
                     removalAgent = nil
                     Task { await store.perform(.remove, for: agent) }
                 }
             }
-            Button("取消", role: .cancel) { removalAgent = nil }
+            Button(L10n.text("取消"), role: .cancel) { removalAgent = nil }
         }
     }
 
@@ -372,21 +350,21 @@ private struct AgentorSettingsView: View {
         let status = store.integrationStatuses.first { $0.agent == agent }
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text(status?.state.displayName ?? "未扫描").font(.headline)
+                Text(status.map { L10n.text($0.state.displayName) } ?? L10n.text("未扫描")).font(.headline)
                 Spacer()
                 ForEach((status?.capabilities ?? capabilities(agent)).filter { $0 != .status }, id: \.self) { capability in
-                    Text(capability.rawValue).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2)
+                    Text(L10n.text(capability.rawValue)).font(.system(size: 11)).padding(.horizontal, 6).padding(.vertical, 2)
                         .background(.secondary.opacity(0.15), in: Capsule())
                 }
             }
             if let status {
                 HStack(alignment: .top, spacing: 12) {
                     if status.paths.isEmpty {
-                        Text("检测路径（0）")
+                        Text(L10n.text("检测路径（0）"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
-                        DisclosureGroup("检测路径（\(status.paths.count)）") {
+                        DisclosureGroup(L10n.text("检测路径（%1$@）", String(describing: status.paths.count))) {
                             VStack(alignment: .leading, spacing: 4) {
                                 ForEach(status.paths, id: \.self) {
                                     Text($0).font(.caption2.monospaced()).textSelection(.enabled)
@@ -398,19 +376,19 @@ private struct AgentorSettingsView: View {
                         .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
-                    Text(status.scannedAt.formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption2)
+                    Text(status.scannedAt.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: AppLanguageContext.shared.locale)))
+                        .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(status.detail)
+                    Text(status.detailMessage?.resolve() ?? status.detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     if status.state == .integrated {
-                        Button("移除接入", role: .destructive) { removalAgent = agent }
+                        Button(L10n.text("移除接入"), role: .destructive) { removalAgent = agent }
                     } else {
-                        Button(status.state == .notIntegrated ? "接入/修复" : "未发现") {
+                        Button(status.state == .notIntegrated ? L10n.text("接入/修复") : L10n.text("未发现")) {
                             Task { await store.perform(.install, for: agent) }
                         }
                         .disabled(status.state == .notFound)

@@ -4,6 +4,14 @@ import XCTest
 
 @MainActor
 final class IslandSurfaceTests: XCTestCase {
+    func testPausedVisualScheduleHasNoRecurringTicks() {
+        let start = Date(timeIntervalSince1970: 10)
+        let paused = VisualTimelineSchedule(interval: 1, paused: true)
+        XCTAssertEqual(Array(paused.entries(from: start, mode: .normal)), [start])
+        let running = VisualTimelineSchedule(interval: 1, paused: false)
+        XCTAssertEqual(Array(running.entries(from: start, mode: .normal).prefix(3)), [start, start.addingTimeInterval(1), start.addingTimeInterval(2)])
+    }
+
     func testExpandedLogicalStateMakesOnlyExpandedContentInteractive() {
         let policy = IslandContentInteractivity(isExpanded: true)
 

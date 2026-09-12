@@ -16,6 +16,7 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
     public let iconDescriptor: FunctionCardIconDescriptor
     public let moduleName: String
     public let summary: String
+    public let message: LocalizedMessage?
     public let style: FunctionCardPromptStyle
     public let occurredAt: Date
 
@@ -27,6 +28,7 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
         iconDescriptor: FunctionCardIconDescriptor,
         moduleName: String,
         summary: String,
+        message: LocalizedMessage? = nil,
         style: FunctionCardPromptStyle = .standard,
         occurredAt: Date = Date()
     ) {
@@ -35,6 +37,7 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
         self.iconDescriptor = iconDescriptor
         self.moduleName = moduleName
         self.summary = summary
+        self.message = message
         self.style = style
         self.occurredAt = occurredAt
     }
@@ -45,6 +48,7 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
         systemImage: String,
         moduleName: String,
         summary: String,
+        message: LocalizedMessage? = nil,
         style: FunctionCardPromptStyle = .standard,
         occurredAt: Date = Date()
     ) {
@@ -54,6 +58,7 @@ public struct FunctionCardPrompt: Equatable, Identifiable, Sendable {
             iconDescriptor: .systemSymbol(name: systemImage),
             moduleName: moduleName,
             summary: summary,
+            message: message,
             style: style,
             occurredAt: occurredAt
         )
@@ -73,6 +78,7 @@ public final class PromptCenter {
     public static let postExpansionDelay: Duration = .milliseconds(1_500)
 
     public private(set) var current: FunctionCardPrompt?
+    public private(set) var displayedAt: Date?
     public private(set) var pending: [FunctionCardPrompt] = []
     @ObservationIgnored private var playbackTask: Task<Void, Never>?
     @ObservationIgnored private var timeoutTask: Task<Void, Never>?
@@ -120,9 +126,16 @@ public final class PromptCenter {
         guard let item = current else { return nil }
         knownTokens.remove(item.token)
         current = nil
+        displayedAt = nil
         onCurrentChanged(nil)
         if playbackAllowed { scheduleNext(after: .zero) }
         return item
+    }
+
+    public func markDisplayed(token: String, at date: Date = Date()) {
+        guard current?.token == token, displayedAt == nil else { return }
+        displayedAt = date
+        scheduleTimeout()
     }
 
     public func revoke(token: String) {
@@ -149,16 +162,15 @@ public final class PromptCenter {
                 do { try await Task.sleep(for: delay) }
                 catch { return }
             }
-            guard let self, self.playbackAllowed, self.current == nil, !self.pending.isEmpty else { return }
+            guard !Task.isCancelled, let self, self.playbackAllowed, self.current == nil, !self.pending.isEmpty else { return }
             self.current = self.pending.removeFirst()
             self.onCurrentChanged(self.current)
-            self.scheduleTimeout()
         }
     }
 
     private func scheduleTimeout() {
         timeoutTask?.cancel()
-        guard playbackAllowed, current != nil else { return }
+        guard playbackAllowed, current != nil, displayedAt != nil else { return }
         timeoutTask = Task { [weak self] in
             do { try await Task.sleep(for: Self.displayDuration) }
             catch { return }

@@ -1,14 +1,15 @@
 import SwiftUI
 
 enum TimerIslandAppearance {
-    static let primaryText = Color.white
-    static let secondaryText = Color.white.opacity(0.58)
+    static let primaryText = Color.primary
+    static let secondaryText = Color.secondary
     static let track = Color.white.opacity(0.14)
 }
 
 struct TimerTaskProgressBar: View {
     let ratio: Double
     let color: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
@@ -20,8 +21,9 @@ struct TimerTaskProgressBar: View {
                     .frame(width: proxy.size.width * clampedRatio)
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.35), value: ratio)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("任务进度")
+        .accessibilityLabel(L10n.text("任务进度"))
         .accessibilityValue("\(percentage)%")
     }
 
@@ -55,7 +57,7 @@ struct TimerCompletionRing: View {
         }
         .frame(width: 120, height: 120)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("今日完成度")
+        .accessibilityLabel(L10n.text("今日完成度"))
         .accessibilityValue("\(percentage)%")
     }
 

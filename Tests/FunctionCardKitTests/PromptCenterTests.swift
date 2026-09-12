@@ -68,6 +68,48 @@ final class PromptCenterTests: XCTestCase {
         XCTAssertEqual(coordinator.surfaceDescription, .resting(featureID: timer))
     }
 
+    func testDisplayStartIsIndependentOfOccurrenceAndStableAcrossRedraws() async {
+        let center = PromptCenter()
+        center.setPlaybackAllowed(false)
+        center.publish(prompt(1, source: timer))
+        XCTAssertNil(center.displayedAt)
+        center.setPlaybackAllowed(true)
+        await Task.yield()
+        let start = Date(timeIntervalSince1970: 900)
+        center.markDisplayed(token: "1", at: start)
+        center.markDisplayed(token: "1", at: start.addingTimeInterval(30))
+        XCTAssertEqual(center.displayedAt, start)
+        center.revoke(token: "1")
+        XCTAssertNil(center.displayedAt)
+    }
+
+    func testExpandedPromptIsConsumedOnCollapseWithoutChangingCards() async {
+        let coordinator = IslandCoordinator(registry: CardRegistry(registrations: [registrationWithoutCompact(timer), registrationWithoutCompact(pusher)]))
+        coordinator.pointerEntered()
+        coordinator.publishPrompt(prompt(1, source: pusher))
+        await Task.yield()
+        coordinator.promptCenter.markDisplayed(token: "1")
+        XCTAssertEqual(coordinator.registry.selectedID, timer)
+        coordinator.escape(pointerIsInside: false)
+        XCTAssertNil(coordinator.promptCenter.current)
+        XCTAssertEqual(coordinator.promptCenter.count, 0)
+    }
+
+    func testEditingBlocksPromptNavigationUntilExplicitClickAfterEditing() async {
+        let coordinator = IslandCoordinator(registry: CardRegistry(registrations: [registrationWithoutCompact(timer), registrationWithoutCompact(pusher)]))
+        coordinator.pointerEntered()
+        coordinator.setEditingText(true)
+        coordinator.publishPrompt(prompt(2, source: pusher))
+        await Task.yield()
+        coordinator.openCurrentPrompt()
+        XCTAssertEqual(coordinator.registry.selectedID, timer)
+        XCTAssertNotNil(coordinator.promptCenter.current)
+        coordinator.setEditingText(false)
+        coordinator.openCurrentPrompt()
+        XCTAssertEqual(coordinator.registry.selectedID, pusher)
+        XCTAssertNil(coordinator.promptCenter.current)
+    }
+
     private func prompt(_ index: Int, source: FeatureID) -> FunctionCardPrompt {
         FunctionCardPrompt(
             token: String(index),

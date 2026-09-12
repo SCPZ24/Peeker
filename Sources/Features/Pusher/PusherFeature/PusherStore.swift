@@ -18,11 +18,17 @@ enum PusherMovePreparation {
 @MainActor
 @Observable
 public final class PusherStore {
+    public var isPresentationVisible = false
+    public private(set) var completionFeedback: PusherCompletionFeedback?
+    @ObservationIgnored private var feedbackTask: Task<Void, Never>?
     public private(set) var board: PusherBoard?
     public private(set) var snapshots: [PusherDailySnapshot] = []
     public private(set) var isLoading = false
     public private(set) var isMovePending = false
-    public private(set) var errorMessage: String?
+    public private(set) var pendingTaskID: UUID?
+    private var localizedError: LocalizedMessage?
+    public var errorMessage: String? { localizedError?.diagnosticDescription }
+    public var localizedErrorMessage: String? { localizedError?.resolve() }
     public var carryIncomplete: Bool
     public var refreshTime: RefreshTime
 
@@ -63,6 +69,8 @@ public final class PusherStore {
         self.onMutationEvent = onMutationEvent
     }
 
+    deinit { feedbackTask?.cancel() }
+
     public func load() async {
         guard acquireBoardMutation() else { return }
         isLoading = true
@@ -76,9 +84,9 @@ public final class PusherStore {
             try await recoverThroughNow()
             try await reloadSnapshots(for: clock.now())
             await scheduleBoundary()
-            errorMessage = nil
+            localizedError = nil
         } catch {
-            errorMessage = "Pusher 无法载入：\(error.localizedDescription)"
+            localizedError = L10n.message("Pusher 无法载入：%1$@", String(describing: error.localizedDescription))
         }
         isLoading = false
         await finishBoardMutation()
@@ -108,12 +116,12 @@ public final class PusherStore {
             try current.insert(task)
             board = current
             try await repository.saveBoard(current)
-            errorMessage = nil
+            localizedError = nil
             onMutationEvent(.created(task))
             succeeded = true
         } catch {
             board = old
-            errorMessage = "无法创建任务：\(error.localizedDescription)"
+            localizedError = L10n.message("无法创建任务：%1$@", String(describing: error.localizedDescription))
             succeeded = false
         }
         await finishBoardMutation()
@@ -150,11 +158,11 @@ public final class PusherStore {
             try current.update(task)
             board = current
             try await repository.saveBoard(current)
-            errorMessage = nil
+            localizedError = nil
             succeeded = true
         } catch {
             board = old
-            errorMessage = "无法编辑任务：\(error.localizedDescription)"
+            localizedError = L10n.message("无法编辑任务：%1$@", String(describing: error.localizedDescription))
             succeeded = false
         }
         await finishBoardMutation()
@@ -180,12 +188,12 @@ public final class PusherStore {
             try current.remove(taskID: taskID)
             board = current
             try await repository.deleteTask(id: taskID)
-            errorMessage = nil
+            localizedError = nil
             if let deletedTask { onMutationEvent(.deleted(deletedTask)) }
             succeeded = true
         } catch {
             board = old
-            errorMessage = "无法删除任务：\(error.localizedDescription)"
+            localizedError = L10n.message("无法删除任务：%1$@", String(describing: error.localizedDescription))
             succeeded = false
         }
         await finishBoardMutation()
@@ -215,7 +223,8 @@ public final class PusherStore {
             board = moved
             isMovePending = true
             pendingMoveID = transaction.id
-            errorMessage = nil
+            pendingTaskID = taskID
+            localizedError = nil
             return .started(transaction)
         } catch {
             isBoardMutationPending = false
@@ -224,7 +233,7 @@ public final class PusherStore {
     }
 
     @discardableResult
-    func persistMove(_ transaction: PusherMoveTransaction) async -> Bool {
+    func persistMove(_ transaction: PusherMoveTransaction, fromUI: Bool = false) async -> Bool {
         guard pendingMoveID == transaction.id else { return false }
         await Task.yield()
         do {
@@ -233,11 +242,22 @@ public final class PusherStore {
                 orderedTasks: transaction.after.allTasks
             )
             guard pendingMoveID == transaction.id else { return false }
-            errorMessage = nil
+            localizedError = nil
             if let before = transaction.before.allTasks.first(where: { task in
                 transaction.after.allTasks.contains(where: { $0.id == task.id && $0.status != task.status })
             }), let after = transaction.after.allTasks.first(where: { $0.id == before.id }) {
-                onMutationEvent(.moved(after, from: before.status, to: after.status))
+                if fromUI && isPresentationVisible && before.status != .done && after.status == .done {
+                    feedbackTask?.cancel()
+                    completionFeedback = PusherCompletionFeedback(token: transaction.id, taskID: after.id)
+                    feedbackTask = Task { [weak self] in
+                        do { try await Task.sleep(for: .milliseconds(450)) }
+                        catch { return }
+                        guard self?.completionFeedback?.token == transaction.id else { return }
+                        self?.completionFeedback = nil
+                    }
+                } else {
+                    onMutationEvent(.moved(after, from: before.status, to: after.status))
+                }
             }
             await finishMoveTransaction()
             return true
@@ -246,13 +266,13 @@ public final class PusherStore {
             withAnimation(.easeInOut(duration: 0.12)) {
                 board = transaction.before
             }
-            errorMessage = "无法移动任务，已恢复原位置：\(error.localizedDescription)"
+            localizedError = L10n.message("无法移动任务，已恢复原位置：%1$@", String(describing: error.localizedDescription))
             await finishMoveTransaction()
             return false
         }
     }
 
-    public func move(taskID: UUID, to status: PusherStatus, at position: Int) async -> Bool {
+    public func move(taskID: UUID, to status: PusherStatus, at position: Int, fromUI: Bool = false) async -> Bool {
         switch beginMove(
             taskID: taskID,
             to: status,
@@ -263,7 +283,7 @@ public final class PusherStore {
         case .unchanged:
             return true
         case let .started(transaction):
-            return await persistMove(transaction)
+            return await persistMove(transaction, fromUI: fromUI)
         }
     }
 
@@ -283,9 +303,9 @@ public final class PusherStore {
             self.refreshTime = refreshTime
             onRefreshTimeChanged(refreshTime)
             await scheduleBoundary()
-            errorMessage = nil
+            localizedError = nil
         } catch {
-            errorMessage = "Pusher 无法更新刷新时间：\(error.localizedDescription)"
+            localizedError = L10n.message("Pusher 无法更新刷新时间：%1$@", String(describing: error.localizedDescription))
         }
         await finishBoardMutation()
     }
@@ -301,7 +321,7 @@ public final class PusherStore {
         } catch is CancellationError {
             return
         } catch {
-            errorMessage = "Pusher 月历无法载入：\(error.localizedDescription)"
+            localizedError = L10n.message("Pusher 月历无法载入：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -319,7 +339,7 @@ public final class PusherStore {
             try await recoverThroughNow()
             await scheduleBoundary()
         } catch {
-            errorMessage = "Pusher 跨日恢复失败：\(error.localizedDescription)"
+            localizedError = L10n.message("Pusher 跨日恢复失败：%1$@", String(describing: error.localizedDescription))
         }
     }
 
@@ -352,7 +372,7 @@ public final class PusherStore {
             await scheduleBoundary()
         } catch {
             await scheduleBoundary()
-            errorMessage = "Pusher 跨日恢复失败：\(error.localizedDescription)"
+            localizedError = L10n.message("Pusher 跨日恢复失败：%1$@", String(describing: error.localizedDescription))
             throw error
         }
     }
@@ -404,6 +424,7 @@ public final class PusherStore {
 
     private func finishMoveTransaction() async {
         pendingMoveID = nil
+        pendingTaskID = nil
         await finishBoardMutation()
         isMovePending = false
     }
@@ -421,4 +442,9 @@ public final class PusherStore {
         }
         isBoardMutationPending = false
     }
+}
+
+public struct PusherCompletionFeedback: Equatable, Sendable {
+    public let token: UUID
+    public let taskID: UUID
 }

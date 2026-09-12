@@ -3,6 +3,7 @@ import AgentorProtocol
 import CryptoKit
 import Darwin
 import Foundation
+import PeekerCore
 
 struct AgentorIntegrationEnvironment: Sendable {
     let homeDirectory: URL
@@ -61,6 +62,17 @@ enum AgentorIntegrationError: LocalizedError, Equatable {
         case let .writeFailed(path): "无法原子写入：\(path)"
         }
     }
+    var localizedMessage: LocalizedMessage {
+        switch self {
+        case .agentNotFound: L10n.message("未发现 Agent，未写入任何配置。")
+        case .resourcesMissing: L10n.message("Peeker.app 缺少 Agentor 适配器资源。")
+        case let .malformedConfiguration(path): L10n.message("配置无法安全解析：%1$@", path)
+        case let .unsafePath(path): L10n.message("路径不满足安全写入条件：%1$@", path)
+        case let .managedFileModified(path): L10n.message("托管文件已被修改，请手工清理：%1$@", path)
+        case let .commandFailed(message): L10n.message("Agent 插件命令失败：%1$@", message)
+        case let .writeFailed(path): L10n.message("无法原子写入：%1$@", path)
+        }
+    }
 }
 
 private struct AgentorBundleResourceManifest: Codable {
@@ -115,18 +127,18 @@ actor AgentorIntegrationManager {
         let evidence = discoveryEvidence(agent)
         let capabilities: [AgentCapability] = agent == .claude || agent == .openCode ? [.status, .answer] : [.status, .reminder]
         guard !evidence.isEmpty else {
-            return AgentIntegrationStatus(agent: agent, state: .notFound, detail: "标准路径中未发现安装证据。", scannedAt: now, capabilities: capabilities)
+            return AgentIntegrationStatus(agent: agent, state: .notFound, detail: "标准路径中未发现安装证据。", detailMessage: L10n.message("标准路径中未发现安装证据。"), scannedAt: now, capabilities: capabilities)
         }
         do {
             let detail = try integrationDetail(agent)
             return AgentIntegrationStatus(
                 agent: agent, state: detail.integrated ? .integrated : .notIntegrated,
-                paths: evidence + detail.paths, detail: detail.message, scannedAt: now, capabilities: capabilities
+                paths: evidence + detail.paths, detail: detail.message, detailMessage: L10n.message(detail.message), scannedAt: now, capabilities: capabilities
             )
         } catch {
             return AgentIntegrationStatus(
                 agent: agent, state: .notIntegrated, paths: evidence,
-                detail: error.localizedDescription, scannedAt: now, capabilities: capabilities
+                detail: error.localizedDescription, detailMessage: (error as? AgentorIntegrationError)?.localizedMessage, scannedAt: now, capabilities: capabilities
             )
         }
     }

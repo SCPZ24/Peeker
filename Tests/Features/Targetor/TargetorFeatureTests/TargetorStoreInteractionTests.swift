@@ -5,7 +5,7 @@ import PeekerCore
 
 @MainActor
 final class TargetorStoreInteractionTests: XCTestCase {
-    func testUICheckinPublishesOnePromptAndFeedbackAfterCommit() async throws {
+    func testVisibleUICheckinPublishesOnlyInPlaceFeedbackAfterCommit() async throws {
         let fixture = try makeFixture()
         await fixture.store.load()
 
@@ -19,7 +19,7 @@ final class TargetorStoreInteractionTests: XCTestCase {
         XCTAssertEqual(fixture.store.feedback?.targetID, fixture.targetID)
         XCTAssertEqual(fixture.store.feedback?.state, .started)
         XCTAssertEqual(fixture.store.feedback?.startedAt, Date(timeIntervalSince1970: 3_600))
-        XCTAssertEqual(fixture.prompts.values.count, 1)
+        XCTAssertEqual(fixture.prompts.values.count, 0)
         XCTAssertNil(fixture.store.errorMessage)
         let checkinCalls = await fixture.repository.checkinCallCount()
         XCTAssertEqual(checkinCalls, 1)
@@ -45,7 +45,7 @@ final class TargetorStoreInteractionTests: XCTestCase {
 
         XCTAssertNotEqual(firstToken, secondToken)
         XCTAssertEqual(fixture.store.feedback?.state, .completed)
-        XCTAssertEqual(fixture.prompts.values.count, 2)
+        XCTAssertEqual(fixture.prompts.values.count, 0)
     }
 
     func testUICheckinFailureKeepsStateAndDoesNotPublishFeedbackOrPrompt() async throws {
@@ -61,7 +61,7 @@ final class TargetorStoreInteractionTests: XCTestCase {
         XCTAssertEqual(fixture.store.targets.first?.currentPeriod?.count, 0)
         XCTAssertNil(fixture.store.feedback)
         XCTAssertTrue(fixture.prompts.values.isEmpty)
-        XCTAssertTrue(fixture.store.errorMessage?.contains("无法打卡") == true)
+        XCTAssertNotNil(fixture.store.errorMessage)
         let checkinCalls = await fixture.repository.checkinCallCount()
         XCTAssertEqual(checkinCalls, 1)
     }
@@ -79,9 +79,19 @@ final class TargetorStoreInteractionTests: XCTestCase {
         XCTAssertEqual(fixture.store.targets.first?.currentPeriod?.count, 0)
         XCTAssertNil(fixture.store.feedback)
         XCTAssertTrue(fixture.prompts.values.isEmpty)
-        XCTAssertTrue(fixture.store.errorMessage?.contains("周期已更新") == true)
+        XCTAssertNotNil(fixture.store.errorMessage)
         let checkinCalls = await fixture.repository.checkinCallCount()
         XCTAssertEqual(checkinCalls, 0)
+    }
+
+    func testHiddenUICheckinUsesPromptWithoutLocalCelebration() async throws {
+        let fixture = try makeFixture()
+        await fixture.store.load()
+        fixture.store.isPresentationVisible = false
+        let succeeded = await fixture.store.checkinFromUI(targetID: fixture.targetID, expectedPeriodID: fixture.periodID)
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(fixture.prompts.values.count, 1)
+        XCTAssertNil(fixture.store.feedback)
     }
 
     private func makeFixture(
@@ -121,6 +131,7 @@ final class TargetorStoreInteractionTests: XCTestCase {
             isValidIcon: { _ in true },
             publishCheckin: { prompts.values.append($0) }
         )
+        store.isPresentationVisible = true
         return (store, repository, prompts, target.id, period.id)
     }
 }

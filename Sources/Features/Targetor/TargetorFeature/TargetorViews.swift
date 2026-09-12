@@ -132,6 +132,9 @@ private struct TargetorExpandedView: View {
     let setDragging: @MainActor (Bool) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expansionNonce = UUID()
+    @Environment(\.isVisualActivityEnabled) private var isVisible
+    @State private var selectedTargetID: UUID?
+    @State private var calendarCache: [UUID: TargetorTargetCalendarSnapshot] = [:]
     @State private var hoveredTargetID: UUID?
     @State private var activeDragEnvelope: TargetorDragEnvelope?
     @State private var dragLayoutModel = TargetorDragLayoutModel()
@@ -156,7 +159,12 @@ private struct TargetorExpandedView: View {
                 targetGrid
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                TargetorSidePanel(
+                VStack(spacing: 8) {
+                    Button(L10n.text("返回总览")) {
+                        selectedTargetID = nil; hoveredTargetID = nil
+                    }
+                    .buttonStyle(.borderless)
+                    TargetorSidePanel(
                     mode: sidePanelMode,
                     targets: store.targets,
                     manifest: manifest,
@@ -166,8 +174,8 @@ private struct TargetorExpandedView: View {
                     isDropTargeted: dragLayoutModel.targetedEnvelope != nil,
                     reduceMotion: reduceMotion
                 )
-                .frame(width: 190, height: 190)
-                .frame(width: 190)
+                }
+                .frame(width: 285)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .onGeometryChange(for: CGRect.self) { proxy in
@@ -181,7 +189,7 @@ private struct TargetorExpandedView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottomLeading) {
-            if let errorMessage = store.errorMessage {
+            if let errorMessage = store.localizedErrorMessage {
                 Text(errorMessage)
                     .font(.caption2)
                     .foregroundStyle(.red)
@@ -192,22 +200,36 @@ private struct TargetorExpandedView: View {
             }
         }
         .onAppear {
+            store.isPresentationVisible = isVisible
+            store.reduceMotion = reduceMotion
             expansionNonce = UUID()
             dragLayoutModel.clearTargetedEnvelope()
             expansionHold.attach(publish: setDragging)
             expansionHold.feedbackChanged(isVisible: store.feedback != nil)
         }
+        .onChange(of: isVisible) { _, value in store.isPresentationVisible = value }
+        .onChange(of: reduceMotion) { _, value in store.reduceMotion = value }
         .onDisappear {
+            store.isPresentationVisible = false
             finishDragging()
             expansionHold.detach()
         }
-        .task { await reloadSummaryCalendar() }
-        .task(id: calendarRequest) {
-            await reloadTargetCalendar(for: calendarRequest)
+        .task(id: isVisible ? calendarRevision : nil) { if isVisible { await reloadSummaryCalendar() } }
+        .task(id: isVisible ? calendarRequest : nil) {
+            if isVisible { await reloadTargetCalendar(for: calendarRequest) }
         }
-        .onChange(of: store.targets) { _, _ in
+        .onChange(of: store.calendarRevision) { _, _ in
+            calendarCache.removeAll(keepingCapacity: true)
             calendarRevision += 1
-            Task { await reloadSummaryCalendar() }
+        }
+        .onChange(of: store.targets) { old, next in
+            let previous = Dictionary(uniqueKeysWithValues: old.map { ($0.id, $0) })
+            for target in next where previous[target.id] != target { calendarCache[target.id] = nil }
+            let ids = Set(next.map(\.id))
+            calendarCache = calendarCache.filter { ids.contains($0.key) }
+            if let selectedTargetID, !ids.contains(selectedTargetID) { self.selectedTargetID = nil }
+            if let hoveredTargetID, !ids.contains(hoveredTargetID) { self.hoveredTargetID = nil }
+            calendarRevision += 1
         }
         .onChange(of: store.feedback?.token) { _, _ in
             expansionHold.feedbackChanged(isVisible: store.feedback != nil)
@@ -218,14 +240,14 @@ private struct TargetorExpandedView: View {
     private var targetGrid: some View {
         if store.targets.isEmpty {
             ContentUnavailableView(
-                "还没有长期目标",
+                L10n.text("还没有长期目标"),
                 systemImage: "scope",
-                description: Text("请在 Targetor 设置中创建推进项。")
+                description: Text(L10n.text("请在 Targetor 设置中创建推进项。"))
             )
         } else {
             ScrollView {
                 LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
+                    columns: [GridItem(.adaptive(minimum: 180), spacing: 10)],
                     spacing: 10
                 ) {
                     ForEach(store.targets) { state in
@@ -238,18 +260,26 @@ private struct TargetorExpandedView: View {
                             beginDragging: beginDragging,
                             finishDragging: finishDragging
                         )
+                        .focusable()
+                        .onKeyPress(.return) { selectedTargetID = state.id; return .handled }
+                        .onTapGesture { selectedTargetID = state.id }
+                        .contextMenu {
+                            Button(L10n.text("查看日历")) { selectedTargetID = state.id }
+                            if let period = state.currentPeriod, period.state != .completed {
+                                Button(L10n.text("打卡")) {
+                                    _ = performDrop(TargetorDragEnvelope(expansionNonce: expansionNonce, targetID: state.id, periodID: period.id))
+                                }
+                            }
+                        }
+                        .accessibilityAction(named: L10n.text("查看日历")) { selectedTargetID = state.id }
                         .onHover { hovering in
                             withAnimation(hoverAnimation) {
-                                if hovering {
+                                if hovering && selectedTargetID == nil {
                                     if hoveredTargetID != state.id {
                                         targetCalendar = nil
                                         calendarErrorMessage = nil
                                     }
                                     hoveredTargetID = state.id
-                                } else if hoveredTargetID == state.id {
-                                    hoveredTargetID = nil
-                                    targetCalendar = nil
-                                    calendarErrorMessage = nil
                                 }
                             }
                         }
@@ -264,12 +294,12 @@ private struct TargetorExpandedView: View {
         TargetorSidePanelMode.resolve(
             feedback: store.feedback,
             activeEnvelope: dragLayoutModel.targetedEnvelope ?? activeDragEnvelope,
-            hoveredTargetID: hoveredTargetID
+            hoveredTargetID: selectedTargetID ?? hoveredTargetID
         )
     }
 
     private var calendarRequest: TargetorCalendarRequest? {
-        hoveredTargetID.map {
+        (store.feedback?.targetID ?? selectedTargetID ?? hoveredTargetID).map {
             TargetorCalendarRequest(
                 targetID: $0,
                 revision: calendarRevision
@@ -323,8 +353,12 @@ private struct TargetorExpandedView: View {
     }
 
     private func reloadSummaryCalendar() async {
-        guard let cells = try? await store.summaryCalendar(), !Task.isCancelled else { return }
-        summaryCells = cells
+        do {
+            let cells = try await store.summaryCalendar()
+            try Task.checkCancellation()
+            summaryCells = cells
+        } catch is CancellationError { return }
+        catch { calendarErrorMessage = L10n.text("日历无法载入：%1$@", String(describing: error.localizedDescription)) }
     }
 
     private func reloadTargetCalendar(for request: TargetorCalendarRequest?) async {
@@ -333,17 +367,23 @@ private struct TargetorExpandedView: View {
             calendarErrorMessage = nil
             return
         }
+        if let cached = calendarCache[request.targetID] {
+            targetCalendar = cached
+            return
+        }
         do {
             let snapshot = try await store.targetCalendar(targetID: request.targetID)
             guard !Task.isCancelled, calendarRequest == request else { return }
             targetCalendar = snapshot
+            if calendarCache.count >= 12 { calendarCache.removeAll(keepingCapacity: true) }
+            calendarCache[request.targetID] = snapshot
             calendarErrorMessage = nil
         } catch is CancellationError {
             return
         } catch {
             guard calendarRequest == request else { return }
             targetCalendar = nil
-            calendarErrorMessage = "日历无法载入"
+            calendarErrorMessage = L10n.text("日历无法载入")
         }
     }
 }
@@ -430,11 +470,6 @@ private struct TargetorCard: View {
         let period = state.currentPeriod
         let checkinState = period?.state ?? .notStarted
         ZStack {
-            RoundedRectangle(cornerRadius: 14)
-                .fill(.white.opacity(0.22))
-                .padding(TargetorCardLayout.rearLayerInset)
-                .offset(x: hovered && !reduceMotion ? TargetorAnimationTokens.rearOffset : 0)
-                .rotationEffect(.degrees(hovered && !reduceMotion ? TargetorAnimationTokens.rearRotation : 0))
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 8) {
                     FunctionCardIconView(
@@ -452,7 +487,7 @@ private struct TargetorCard: View {
                         Text(state.target.title)
                             .font(.headline)
                             .lineLimit(1)
-                        Text("本周期 \(period?.count ?? 0)/\(period?.maxCountSnapshot ?? state.target.maxCount)")
+                        Text(L10n.text("本周期 %1$@/%2$@", String(describing: period?.count ?? 0), String(describing: period?.maxCountSnapshot ?? state.target.maxCount)))
                             .font(.caption.monospacedDigit().weight(.semibold))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -473,7 +508,7 @@ private struct TargetorCard: View {
                     .tint(.white)
             }
             .padding(11)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .background(Color.white.opacity(hovered ? 0.09 : 0.05), in: RoundedRectangle(cornerRadius: 14))
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
                     .stroke(
@@ -481,7 +516,6 @@ private struct TargetorCard: View {
                         lineWidth: 1.5
                     )
             }
-            .scaleEffect(hovered && !reduceMotion ? TargetorAnimationTokens.hoverScale : 1)
             .padding(TargetorCardLayout.frontLayerInset)
         }
         .frame(height: 138)
@@ -516,39 +550,30 @@ private struct TargetorSidePanel: View {
     let reduceMotion: Bool
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.white.opacity(0.08))
-            if case let .feedback(feedback) = mode {
-                TargetorFeedbackEffect(feedback: feedback, reduceMotion: reduceMotion)
-                    .transition(.identity)
+        panelContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay {
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 12).strokeBorder(.secondary, style: StrokeStyle(lineWidth: 1, dash: [5]))
+                        .allowsHitTesting(false)
+                }
             }
-            panelContent
-                .padding(10)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(
-                    .white.opacity(isDropTargeted ? 0.85 : 0.15),
-                    lineWidth: isDropTargeted ? 2 : 1
-                )
-        }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: mode)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: isDropTargeted)
     }
 
     @ViewBuilder
     private var panelContent: some View {
         switch mode {
         case let .feedback(feedback):
-            feedbackView(feedback.state)
-                .transition(.opacity)
+            VStack(spacing: 8) {
+                TargetorFeedbackEffect(feedback: feedback, reduceMotion: reduceMotion)
+                targetCalendarView(targetID: feedback.targetID)
+            }
         case let .dragging(targetID):
             if let target = targets.first(where: { $0.id == targetID }) {
                 checkinView(target)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
             } else {
-                Text("目标已不可用").font(.caption).foregroundStyle(.secondary)
+                Text(L10n.text("目标已不可用")).font(.caption).foregroundStyle(.secondary)
             }
         case let .target(targetID):
             targetCalendarView(targetID: targetID)
@@ -561,15 +586,15 @@ private struct TargetorSidePanel: View {
 
     private var summaryCalendarView: some View {
         VStack(spacing: 8) {
-            Text("最近九周")
+            Text(L10n.text("最近九周"))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             LazyVGrid(
-                columns: Array(repeating: GridItem(.fixed(12), spacing: 3), count: 9),
+                columns: Array(repeating: GridItem(.fixed(20), spacing: 3), count: 9),
                 spacing: 3
             ) {
                 ForEach(summaryCells) { cell in
-                    calendarCell(cell, size: 12, hue: nil)
+                    calendarCell(cell, size: 20, hue: nil)
                 }
             }
         }
@@ -609,25 +634,25 @@ private struct TargetorSidePanel: View {
     private func monthGrid(snapshot: TargetorTargetCalendarSnapshot) -> some View {
         VStack(spacing: 3) {
             LazyVGrid(
-                columns: Array(repeating: GridItem(.fixed(13), spacing: 4), count: 7),
+                columns: Array(repeating: GridItem(.fixed(30), spacing: 4), count: 7),
                 spacing: 0
             ) {
                 ForEach(mondayFirstWeekdaySymbols, id: \.self) { symbol in
                     Text(symbol)
-                        .font(.system(size: 7, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.tertiary)
-                        .frame(width: 13)
+                        .frame(width: 30)
                 }
             }
             LazyVGrid(
-                columns: Array(repeating: GridItem(.fixed(13), spacing: 4), count: 7),
+                columns: Array(repeating: GridItem(.fixed(30), spacing: 4), count: 7),
                 spacing: 3
             ) {
                 ForEach(0..<snapshot.leadingEmptyCellCount, id: \.self) { _ in
-                    Color.clear.frame(width: 13, height: 13)
+                    Color.clear.frame(width: 30, height: 30)
                 }
                 ForEach(snapshot.cells) { cell in
-                    calendarCell(cell, size: 13, hue: targetHue(for: cell))
+                    calendarCell(cell, size: 30, hue: targetHue(for: cell))
                 }
             }
         }
@@ -637,14 +662,15 @@ private struct TargetorSidePanel: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 7) {
             ForEach(snapshot.cells) { cell in
                 VStack(spacing: 2) {
-                    Text(cell.date.formatted(.dateTime.month(.abbreviated)))
-                        .font(.system(size: 8, weight: .medium))
+                    Text(cell.date.formatted(.dateTime.month(.abbreviated).locale(AppLanguageContext.shared.locale)))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                     RoundedRectangle(cornerRadius: 3)
                         .fill(calendarColor(cell.level, hue: targetHue(for: cell)))
                         .frame(height: 13)
                 }
-                .help(cell.date.formatted(date: .abbreviated, time: .omitted))
+                .help(cellDescription(cell))
+            .accessibilityLabel(cellDescription(cell))
             }
         }
     }
@@ -661,7 +687,7 @@ private struct TargetorSidePanel: View {
             FunctionCardIconView(
                 descriptor: .bundleSVG(featureID: .targetor, manifestResourceName: promptIcon),
                 manifest: manifest,
-                accessibilityLabel: "打卡提示"
+                accessibilityLabel: L10n.text("打卡提示")
             )
             .frame(width: 48, height: 48)
             .scaleEffect(isDropTargeted && !reduceMotion ? 1.08 : 1)
@@ -671,26 +697,9 @@ private struct TargetorSidePanel: View {
             Text("\(count)/\(maxCount)")
                 .font(.caption.monospacedDigit().weight(.semibold))
                 .foregroundStyle(.secondary)
-            Text(isDropTargeted ? "松开以打卡" : "拖到右侧以打卡")
+            Text(isDropTargeted ? L10n.text("松开以打卡") : L10n.text("拖到右侧以打卡"))
                 .font(.caption)
                 .foregroundStyle(isDropTargeted ? .primary : .secondary)
-        }
-    }
-
-    private func feedbackView(_ state: TargetorCheckinState) -> some View {
-        let icon: String = switch state {
-        case .notStarted, .started: "chevrons-up"
-        case .progressing: "rocket"
-        case .completed: "badge-check"
-        }
-        return VStack(spacing: 12) {
-            FunctionCardIconView(
-                descriptor: .bundleSVG(featureID: .targetor, manifestResourceName: icon),
-                manifest: manifest,
-                accessibilityLabel: "打卡成功"
-            )
-            .frame(width: 52, height: 52)
-            Text("打卡成功").font(.headline)
         }
     }
 
@@ -702,7 +711,19 @@ private struct TargetorSidePanel: View {
         RoundedRectangle(cornerRadius: 3)
             .fill(calendarColor(cell.level, hue: hue))
             .frame(width: size, height: size)
-            .help(cell.date.formatted(date: .abbreviated, time: .omitted))
+            .overlay {
+                if size >= 28 {
+                    Text(cell.date.formatted(.dateTime.day().locale(AppLanguageContext.shared.locale))).font(.system(size: 11)).foregroundStyle(.primary)
+                }
+            }
+            .help(cellDescription(cell))
+            .accessibilityLabel(cellDescription(cell))
+    }
+
+    private func cellDescription(_ cell: TargetorCalendarCell) -> String {
+        let date = cell.date.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, locale: AppLanguageContext.shared.locale))
+        let value = cell.ratio.map { $0.formatted(.percent.locale(AppLanguageContext.shared.locale)) } ?? L10n.text("无记录")
+        return "\(date) · \(value)"
     }
 
     private func targetHue(for cell: TargetorCalendarCell) -> TargetorCalendarHue? {
@@ -713,14 +734,16 @@ private struct TargetorSidePanel: View {
     private func calendarTitle(_ snapshot: TargetorTargetCalendarSnapshot) -> String {
         switch snapshot.granularity {
         case .month:
-            snapshot.anchor.formatted(.dateTime.year().month(.abbreviated))
+            snapshot.anchor.formatted(.dateTime.year().month(.abbreviated).locale(AppLanguageContext.shared.locale))
         case .year:
-            snapshot.anchor.formatted(.dateTime.year())
+            snapshot.anchor.formatted(.dateTime.year().locale(AppLanguageContext.shared.locale))
         }
     }
 
     private var mondayFirstWeekdaySymbols: [String] {
-        let symbols = Calendar.current.veryShortStandaloneWeekdaySymbols
+        let formatter = DateFormatter()
+        formatter.locale = AppLanguageContext.shared.locale
+        let symbols = formatter.shortStandaloneWeekdaySymbols!
         return Array(symbols.dropFirst()) + Array(symbols.prefix(1))
     }
 }
@@ -734,10 +757,10 @@ private struct TargetorSettingsView: View {
 
     var body: some View {
         Form {
-            Section("周期") {
-                DatePicker("全局刷新时刻", selection: refreshBinding, displayedComponents: .hourAndMinute)
+            Section(L10n.text("周期")) {
+                DatePicker(L10n.text("全局刷新时刻"), selection: refreshBinding, displayedComponents: .hourAndMinute)
             }
-            Section("长期目标") {
+            Section(L10n.text("长期目标")) {
                 List {
                     ForEach(store.targets) { state in
                         HStack {
@@ -747,8 +770,8 @@ private struct TargetorSettingsView: View {
                             ).frame(width: 18, height: 18)
                             Text(state.target.title)
                             Spacer()
-                            Button("编辑") { editorTarget = state }
-                            Button("删除", role: .destructive) {
+                            Button(L10n.text("编辑")) { editorTarget = state }
+                            Button(L10n.text("删除"), role: .destructive) {
                                 Task {
                                     do { _ = try await store.archive(targetID: state.id) }
                                     catch { errorMessage = error.localizedDescription }
@@ -763,7 +786,7 @@ private struct TargetorSettingsView: View {
                     }
                 }
                 .frame(minHeight: 220)
-                Button("新增目标", systemImage: "plus") { creating = true }
+                Button(L10n.text("新增目标"), systemImage: "plus") { creating = true }
                 if let errorMessage { Text(errorMessage).font(.caption).foregroundStyle(.red) }
             }
         }
@@ -816,19 +839,19 @@ private struct TargetorEditor: View {
     var body: some View {
         VStack(spacing: 14) {
             Form {
-                TextField("标题", text: $title)
-                TextField("描述（可选）", text: $description)
-                Picker("周期", selection: $frequency) {
-                    ForEach(TargetorFrequency.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                TextField(L10n.text("标题"), text: $title)
+                TextField(L10n.text("描述（可选）"), text: $description)
+                Picker(L10n.text("周期"), selection: $frequency) {
+                    ForEach(TargetorFrequency.allCases, id: \.self) { Text(L10n.text($0.rawValue)).tag($0) }
                 }
                 if frequency == .weekly {
-                    Picker("星期", selection: $weekday) {
-                        ForEach(TargetorWeekday.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    Picker(L10n.text("星期"), selection: $weekday) {
+                        ForEach(TargetorWeekday.allCases, id: \.self) { Text(L10n.text($0.rawValue)).tag($0) }
                     }
                 }
-                if frequency == .monthly { Stepper("月刷新日：\(monthDay)", value: $monthDay, in: 0...30) }
-                Stepper("最大次数：\(maxCount)", value: $maxCount, in: 1...99)
-                TextField("搜索图标", text: $query)
+                if frequency == .monthly { Stepper(L10n.text("月刷新日：%1$@", String(describing: monthDay)), value: $monthDay, in: 0...30) }
+                Stepper(L10n.text("最大次数：%1$@", String(describing: maxCount)), value: $maxCount, in: 1...99)
+                TextField(L10n.text("搜索图标"), text: $query)
                 ScrollView {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8)) {
                         ForEach(Array((manifest?.search(query) ?? []).prefix(160)), id: \.name) { entry in
@@ -845,9 +868,9 @@ private struct TargetorEditor: View {
                 if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             }
             HStack {
-                Button("取消", action: dismiss)
+                Button(L10n.text("取消"), action: dismiss)
                 Spacer()
-                Button("保存") { Task { await save() } }
+                Button(L10n.text("保存")) { Task { await save() } }
                     .buttonStyle(.borderedProminent)
                     .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || manifest?.contains(icon) != true)
             }
@@ -878,6 +901,7 @@ private struct TargetorEditor: View {
     }
 }
 
+@MainActor
 private func statusColor(_ state: TargetorCheckinState) -> Color {
     switch state {
     case .notStarted: .secondary
@@ -887,6 +911,7 @@ private func statusColor(_ state: TargetorCheckinState) -> Color {
     }
 }
 
+@MainActor
 private func calendarColor(
     _ level: TargetorCompletionLevel,
     hue: TargetorCalendarHue?

@@ -41,7 +41,7 @@ final class PusherStoreMoveTests: XCTestCase {
         XCTAssertEqual(fixture.store.board, original)
         XCTAssertEqual(fixture.store.board?.compactSummary, originalSummary)
         XCTAssertFalse(fixture.store.isMovePending)
-        XCTAssertTrue(fixture.store.errorMessage?.contains("无法移动任务，已恢复原位置") == true)
+        XCTAssertNotNil(fixture.store.errorMessage)
     }
 
     func testCreateIsRejectedWhileFailingMoveIsPending() async throws {
@@ -247,6 +247,30 @@ final class PusherStoreMoveTests: XCTestCase {
 
         XCTAssertEqual(fixture.store.board, original)
         XCTAssertFalse(fixture.store.isMovePending)
+    }
+
+    func testLocalDoneFeedbackStartsOnlyAfterCommitAndUsesTransactionIdentity() async throws {
+        let fixture = try makeFixture()
+        await fixture.store.load()
+        fixture.store.isPresentationVisible = true
+        let transaction = try startedTransaction(fixture.store.beginMove(taskID: fixture.first.id, to: .done, insertionIndex: 0))
+        XCTAssertNil(fixture.store.completionFeedback)
+        let succeeded = await fixture.store.persistMove(transaction, fromUI: true)
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(fixture.store.completionFeedback?.token, transaction.id)
+        let repeated = await fixture.store.persistMove(transaction, fromUI: true)
+        XCTAssertFalse(repeated)
+        XCTAssertEqual(fixture.store.completionFeedback?.token, transaction.id)
+    }
+
+    func testFailedDoneMoveNeverCelebrates() async throws {
+        let fixture = try makeFixture(reorderError: TestMoveError.persistenceFailed)
+        await fixture.store.load()
+        fixture.store.isPresentationVisible = true
+        let transaction = try startedTransaction(fixture.store.beginMove(taskID: fixture.first.id, to: .done, insertionIndex: 0))
+        _ = await fixture.store.persistMove(transaction, fromUI: true)
+        XCTAssertNil(fixture.store.completionFeedback)
+        XCTAssertEqual(fixture.store.board?.tasks(in: .planned).first?.id, fixture.first.id)
     }
 
     private func startedTransaction(

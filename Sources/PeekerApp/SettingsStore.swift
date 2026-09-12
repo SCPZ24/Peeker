@@ -54,6 +54,11 @@ final class SettingsStore {
         await refreshLaunchStatus()
     }
 
+    func setLanguage(_ selection: AppLanguage) {
+        preferences.language = selection
+        AppLanguageContext.shared.selection = selection
+    }
+
     func selectScreen(_ id: String?) {
         selectedScreenID = id
         preferences.targetScreenID = id
@@ -88,7 +93,7 @@ final class SettingsStore {
         updateState = .checking
         do {
             guard let release = try await updateChecker.latestRelease() else {
-                updateState = .current("没有可用的公开版本。")
+                updateState = .current(L10n.message("没有可用的公开版本。"))
                 return
             }
             let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? PeekerContract.appVersion
@@ -97,18 +102,18 @@ final class SettingsStore {
                localVersion < remoteVersion {
                 updateState = .available(release)
             } else {
-                updateState = .current("当前版本 \(current) 已是最新版。")
+                updateState = .current(L10n.message("当前版本 %1$@ 已是最新版。", current))
             }
         } catch {
-            updateState = .failed("检查更新失败：\(error.localizedDescription)")
+            updateState = .failed(L10n.message("检查更新失败：%1$@", error.localizedDescription))
         }
     }
 
     enum UpdateState: Equatable {
         case idle
         case checking
-        case current(String)
+        case current(LocalizedMessage)
         case available(AppRelease)
-        case failed(String)
+        case failed(LocalizedMessage)
     }
 }

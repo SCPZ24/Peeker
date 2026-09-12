@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="${1:-2.1.0}"
+VERSION="${1:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT_DIR/Resources/Info.plist")}"
 ARCHIVE="${2:-$ROOT_DIR/dist/Peeker-v$VERSION.zip}"
 OUTPUT="${3:-$ROOT_DIR/.build/verification/peeker.rb}"
 CASK="$($ROOT_DIR/scripts/render-cask.sh "$VERSION" "$ARCHIVE" "$OUTPUT")"

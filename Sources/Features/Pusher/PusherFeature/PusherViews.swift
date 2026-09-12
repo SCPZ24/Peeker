@@ -135,7 +135,7 @@ private struct PusherCompactTrailingView: View {
         .monospacedDigit()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "紧急 \(summary.urgentProcessing)，推进 \(summary.progressProcessing)，规划 \(summary.planningProcessing)"
+            L10n.text("紧急 %1$@，推进 %2$@，规划 %3$@", String(describing: summary.urgentProcessing), String(describing: summary.progressProcessing), String(describing: summary.planningProcessing))
         )
     }
 
@@ -182,6 +182,7 @@ private struct PusherExpandedView: View {
     let setPopoverPresented: @MainActor (Bool) -> Void
     let setDragging: @MainActor (Bool) -> Void
     let setEditingText: @MainActor (Bool) -> Void
+    @Environment(\.isVisualActivityEnabled) private var isVisible
     @State private var popover: PusherPopover?
     @State private var dragSessionNonce = UUID()
     @State private var dragLayoutModel = PusherDragLayoutModel()
@@ -197,7 +198,7 @@ private struct PusherExpandedView: View {
             ) {
                 HStack(spacing: 10) {
                     PusherColumn(
-                        title: "Planned",
+                        title: L10n.text("Planned"),
                         status: .planned,
                         tasks: store.board?.tasks(in: .planned) ?? [],
                         store: store,
@@ -206,7 +207,7 @@ private struct PusherExpandedView: View {
                         edit: { popover = .edit($0) }
                     )
                     PusherColumn(
-                        title: "Processing",
+                        title: L10n.text("Processing"),
                         status: .processing,
                         tasks: store.board?.tasks(in: .processing) ?? [],
                         store: store,
@@ -215,7 +216,7 @@ private struct PusherExpandedView: View {
                         edit: { popover = .edit($0) }
                     )
                     PusherColumn(
-                        title: "Done",
+                        title: L10n.text("Done"),
                         status: .done,
                         tasks: store.board?.tasks(in: .done) ?? [],
                         store: store,
@@ -233,7 +234,7 @@ private struct PusherExpandedView: View {
                 Button {
                     popover = .create
                 } label: {
-                    Label("新增", systemImage: "plus.circle.fill")
+                    Label(L10n.text("新增"), systemImage: "plus.circle.fill")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -242,7 +243,7 @@ private struct PusherExpandedView: View {
                 Button {
                     popover = .calendar
                 } label: {
-                    Label("日历", systemImage: "calendar")
+                    Label(L10n.text("日历"), systemImage: "calendar")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 .buttonStyle(.bordered)
@@ -251,14 +252,17 @@ private struct PusherExpandedView: View {
             .frame(width: 140)
         }
         .overlay(alignment: .bottomLeading) {
-            if let error = store.errorMessage {
+            if let error = store.localizedErrorMessage {
                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
         }
+        .onAppear { store.isPresentationVisible = isVisible }
+        .onChange(of: isVisible) { _, visible in store.isPresentationVisible = visible }
         .onChange(of: popover?.id) { _, newValue in
             setPopoverPresented(newValue != nil)
         }
         .onDisappear {
+            store.isPresentationVisible = false
             dragLayoutModel.clearActiveTarget()
             setDragging(false)
         }
@@ -267,7 +271,7 @@ private struct PusherExpandedView: View {
                 switch item {
                 case .create:
                     PusherEditor(
-                        title: "新增任务",
+                        title: L10n.text("新增任务"),
                         task: nil,
                         setEditingText: setEditingText,
                         save: { title, urgency, repeats in
@@ -278,7 +282,7 @@ private struct PusherExpandedView: View {
                     )
                 case let .edit(task):
                     PusherEditor(
-                        title: "编辑任务",
+                        title: L10n.text("编辑任务"),
                         task: task,
                         setEditingText: setEditingText,
                         save: { title, urgency, repeats in
@@ -329,7 +333,7 @@ private struct PusherExpandedView: View {
         case .unchanged:
             return true
         case let .started(transaction):
-            Task { await store.persistMove(transaction) }
+            Task { await store.persistMove(transaction, fromUI: true) }
             return true
         }
     }
@@ -356,14 +360,14 @@ private struct PusherColumn: View {
                 Text("\(tasks.count)").foregroundStyle(.secondary).monospacedDigit()
             }
             if tasks.isEmpty {
-                Text("拖到这里")
+                Text(L10n.text("拖到这里"))
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 7) {
                         ForEach(Array(tasks.enumerated()), id: \.element.id) { _, task in
-                            PusherTaskCard(task: task, edit: { edit(task) })
+                            PusherTaskCard(task: task, isPending: store.pendingTaskID == task.id, feedback: store.completionFeedback, edit: { edit(task) })
                                 .background {
                                     GeometryReader { geometry in
                                         Color.clear.preference(
@@ -374,6 +378,16 @@ private struct PusherColumn: View {
                                                 )
                                             ]
                                         )
+                                    }
+                                }
+                                .contextMenu {
+                                    Button(L10n.text("编辑")) { edit(task) }
+                                    ForEach(PusherStatus.allCases, id: \.self) { destination in
+                                        if destination != task.status {
+                                            Button(L10n.text("移动到 %1$@", L10n.text(destination == .planned ? "Planned" : destination == .processing ? "Processing" : "Done"))) {
+                                                Task { _ = await store.move(taskID: task.id, to: destination, at: store.board?.tasks(in: destination).count ?? 0, fromUI: true) }
+                                            }
+                                        }
                                     }
                                 }
                                 .allowsHitTesting(!store.isMovePending)
@@ -446,7 +460,7 @@ private struct PusherColumn: View {
 
     private var accessibilityDropValue: String {
         guard let activeDropTarget else { return "" }
-        return "将移动到 \(title)，第 \(activeDropTarget.insertionIndex + 1) 个位置"
+        return L10n.text("将移动到 %1$@，第 %2$@ 个位置", String(describing: title), String(describing: activeDropTarget.insertionIndex + 1))
     }
 
     private func publishGeometry() {
@@ -476,22 +490,37 @@ private struct PusherTaskFramePreferenceKey: PreferenceKey {
 
 private struct PusherTaskCard: View {
     let task: PusherTask
+    var isPending = false
+    var feedback: PusherCompletionFeedback? = nil
     let edit: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var celebrating = false
     @State private var hovering = false
 
     var body: some View {
         HStack {
-            Circle().fill(color).frame(width: 8, height: 8)
+            if task.status == .done && !isPending {
+                Image(systemName: "checkmark").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            } else {
+                Circle().fill(color).frame(width: 8, height: 8)
+            }
             Text(task.title).lineLimit(2)
             Spacer(minLength: 4)
             if hovering {
-                Button("编辑", systemImage: "pencil", action: edit)
+                Button(L10n.text("编辑"), systemImage: "pencil", action: edit)
                     .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
             }
         }
         .padding(9)
-        .background(color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10))
+        .background(task.status == .done ? Color.white.opacity(0.07) : color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10))
+        .scaleEffect(celebrating && !reduceMotion ? 1.025 : 1)
+        .onChange(of: feedback) { _, value in
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                celebrating = value?.taskID == task.id
+            }
+        }
+        .contextMenu { Button(L10n.text("编辑"), action: edit) }
         .onHover { hovering = $0 }
     }
 
@@ -539,31 +568,31 @@ private struct PusherEditor: View {
                 .font(.headline)
                 .foregroundStyle(Color.secondary)
             TextField(
-                "任务名称",
+                L10n.text("任务名称"),
                 text: $name,
-                prompt: Text("任务名称").foregroundStyle(Color.secondary)
+                prompt: Text(L10n.text("任务名称")).foregroundStyle(Color.secondary)
             )
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                 .foregroundStyle(Color.primary)
-                .accessibilityLabel("任务名称")
+                .accessibilityLabel(L10n.text("任务名称"))
                 .onAppear { setEditingText(true) }
                 .onDisappear { setEditingText(false) }
-            Picker("急迫度", selection: $urgency) {
-                Text("紧急").tag(PusherUrgency.urgent)
-                Text("推进").tag(PusherUrgency.progress)
-                Text("规划").tag(PusherUrgency.planning)
+            Picker(L10n.text("急迫度"), selection: $urgency) {
+                Text(L10n.text("紧急")).tag(PusherUrgency.urgent)
+                Text(L10n.text("推进")).tag(PusherUrgency.progress)
+                Text(L10n.text("规划")).tag(PusherUrgency.planning)
             }
             .foregroundStyle(Color.secondary)
-            Toggle("每日刷新", isOn: $repeatsDaily)
+            Toggle(L10n.text("每日刷新"), isOn: $repeatsDaily)
                 .foregroundStyle(Color.secondary)
             HStack {
                 if delete != nil {
-                    Button("删除", role: .destructive) { confirmsDelete = true }
+                    Button(L10n.text("删除"), role: .destructive) { confirmsDelete = true }
                 }
                 Spacer()
-                Button("取消") { dismiss() }
-                Button("确认") {
+                Button(L10n.text("取消")) { dismiss() }
+                Button(L10n.text("确认")) {
                     Task { await save(name, urgency, repeatsDaily) }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -572,8 +601,8 @@ private struct PusherEditor: View {
         }
         .padding(18)
         .frame(width: 340)
-        .confirmationDialog("确认删除这个任务？", isPresented: $confirmsDelete) {
-            Button("删除", role: .destructive) {
+        .confirmationDialog(L10n.text("确认删除这个任务？"), isPresented: $confirmsDelete) {
+            Button(L10n.text("删除"), role: .destructive) {
                 if let delete { Task { await delete() } }
             }
         }
@@ -588,11 +617,11 @@ private struct PusherCalendarView: View {
     var body: some View {
         VStack(spacing: 10) {
             HStack {
-                Text("完成日历").font(.headline)
+                Text(L10n.text("完成日历")).font(.headline)
                 Spacer()
                 Button { moveMonth(-1) } label: { Image(systemName: "chevron.left") }
                     .buttonStyle(.plain)
-                Text(displayedMonth.formatted(.dateTime.year().month(.wide)))
+                Text(displayedMonth.formatted(.dateTime.year().month(.wide).locale(AppLanguageContext.shared.locale)))
                     .font(.subheadline.weight(.semibold))
                     .frame(minWidth: 96)
                 Button { moveMonth(1) } label: { Image(systemName: "chevron.right") }
@@ -669,10 +698,10 @@ private struct PusherCalendarView: View {
     }
 
     private func accessibilityText(for day: CalendarMonthDay) -> String {
-        let dateText = day.date.formatted(.dateTime.month().day().locale(Locale(identifier: "zh_CN")))
-        if day.isFutureBusinessDay { return "\(dateText)，未来日期" }
-        guard let value = value(for: day) else { return "\(dateText)，无记录" }
-        return "\(dateText)，完成 \(value.doneCount) 项，共 \(value.totalCount) 项"
+        let dateText = day.date.formatted(.dateTime.month().day().locale(AppLanguageContext.shared.locale))
+        if day.isFutureBusinessDay { return L10n.text("%1$@，未来日期", String(describing: dateText)) }
+        guard let value = value(for: day) else { return L10n.text("%1$@，无记录", String(describing: dateText)) }
+        return L10n.text("%1$@，完成 %2$@ 项，共 %3$@ 项", String(describing: dateText), String(describing: value.doneCount), String(describing: value.totalCount))
     }
 }
 
@@ -688,10 +717,10 @@ private struct PusherCalendarDayCell: View {
 
     var body: some View {
         VStack(spacing: 3) {
-            Text(day.date.formatted(.dateTime.day()))
+            Text(day.date.formatted(.dateTime.day().locale(AppLanguageContext.shared.locale)))
                 .font(.caption2.weight(day.isCurrentBusinessDay ? .bold : .regular).monospacedDigit())
             Text(valueText)
-                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
                 .foregroundStyle(value == nil ? Color.secondary : Color.primary)
         }
         .frame(maxWidth: .infinity, minHeight: 30)
@@ -727,10 +756,10 @@ private struct PusherCalendarDayCell: View {
 }
 
 private struct PusherPopoverAppearance: ViewModifier {
+    @Environment(\.nativePresentationColorScheme) private var nativeColorScheme
     func body(content: Content) -> some View {
         content
-            .preferredColorScheme(.light)
-            .environment(\.colorScheme, .light)
+            .environment(\.colorScheme, nativeColorScheme)
             .foregroundStyle(Color.primary)
             .tint(.accentColor)
     }
@@ -747,9 +776,9 @@ private struct PusherSettingsView: View {
 
     var body: some View {
         Form {
-            Toggle("顺延单次未完成任务", isOn: carryBinding)
-            DatePicker("业务日刷新时间", selection: refreshBinding, displayedComponents: .hourAndMinute)
-            Text("每日任务始终在新业务日重建，不受顺延开关影响。")
+            Toggle(L10n.text("顺延单次未完成任务"), isOn: carryBinding)
+            DatePicker(L10n.text("业务日刷新时间"), selection: refreshBinding, displayedComponents: .hourAndMinute)
+            Text(L10n.text("每日任务始终在新业务日重建，不受顺延开关影响。"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

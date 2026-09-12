@@ -64,7 +64,7 @@ final class IslandStateMachineTests: XCTestCase {
     }
 
     @MainActor
-    func testPromptBypassesHoverExpansionDelay() async {
+    func testPromptRequiresExplicitClickRegardlessOfHoverDelay() async {
         let coordinator = makeCoordinator(hoverExpansionDelaySeconds: 2)
         coordinator.publishPrompt(FunctionCardPrompt(
             token: "prompt",
@@ -76,7 +76,9 @@ final class IslandStateMachineTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(10))
 
         coordinator.pointerEntered()
-
+        XCTAssertEqual(coordinator.presentation.base, .prompt)
+        XCTAssertNotNil(coordinator.promptCenter.current)
+        coordinator.openCurrentPrompt()
         XCTAssertEqual(coordinator.presentation.base, .hoverExpanded(featureID: timer))
         XCTAssertNil(coordinator.promptCenter.current)
     }

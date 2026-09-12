@@ -118,6 +118,8 @@ for icon in target chevrons-up rocket badge-check circle; do
   esac
 done
 
+"$EXECUTABLE" --verify-localization
+
 CLI_VERSION_JSON="$("$CLI_EXECUTABLE" --version)"
 CLI_ROOT_HELP="$("$CLI_EXECUTABLE" --help)"
 CLI_FEATURE_HELP="$("$CLI_EXECUTABLE" scheduler --help)"

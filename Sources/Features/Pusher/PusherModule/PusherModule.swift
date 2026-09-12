@@ -45,18 +45,25 @@ public struct PusherModule: FunctionCardModule {
             onRefreshTimeChanged: { preferences.saveRefreshTime($0) },
             onCarryIncompleteChanged: { preferences.carryIncomplete = $0 },
             onMutationEvent: { event in
-                let summary: String
+                let message: LocalizedMessage
+                let style: FunctionCardPromptStyle
                 switch event {
-                case let .created(task): summary = "已新建：\(task.title)"
-                case let .deleted(task): summary = "已删除：\(task.title)"
-                case let .moved(task, from, to): summary = "\(task.title)：\(from.rawValue) → \(to.rawValue)"
+                case let .created(task):
+                    style = .standard; message = L10n.message("已新建：%1$@", task.title)
+                case let .deleted(task):
+                    style = .standard; message = L10n.message("已删除：%1$@", task.title)
+                case let .moved(task, from, to):
+                    style = to == .done && from != .done ? .success : .standard
+                    message = L10n.message(style == .success ? "已完成：%1$@" : "已移动：%1$@", task.title)
                 }
                 context.hostActions.publishPrompt(FunctionCardPrompt(
                     token: UUID().uuidString,
                     sourceID: .pusher,
                     systemImage: "rectangle.3.group.fill",
                     moduleName: "Pusher",
-                    summary: summary
+                    summary: message.resolve(),
+                    message: message,
+                    style: style
                 ))
             }
         )

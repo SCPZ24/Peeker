@@ -1,4 +1,5 @@
 import SwiftUI
+import PeekerCore
 import FunctionCardKit
 import MacPlatform
 
@@ -16,6 +17,7 @@ struct IslandHostView: View {
         ) {
             settingsRouter.requestOpen()
         }
+        .environment(\.locale, AppLanguageContext.shared.locale)
         .onAppear {
             let action = openSettings
             settingsRouter.install {

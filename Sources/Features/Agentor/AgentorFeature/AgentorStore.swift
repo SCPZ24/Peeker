@@ -2,6 +2,7 @@ import AgentorProtocol
 import Foundation
 import FunctionCardKit
 import Observation
+import PeekerCore
 
 public enum AgentIntegrationState: String, Sendable, Equatable {
     case notFound
@@ -28,6 +29,7 @@ public struct AgentIntegrationStatus: Identifiable, Sendable, Equatable {
     public let state: AgentIntegrationState
     public let paths: [String]
     public let detail: String
+    public let detailMessage: LocalizedMessage?
     public let scannedAt: Date
     public let capabilities: [AgentCapability]
 
@@ -38,6 +40,7 @@ public struct AgentIntegrationStatus: Identifiable, Sendable, Equatable {
         state: AgentIntegrationState,
         paths: [String] = [],
         detail: String,
+        detailMessage: LocalizedMessage? = nil,
         scannedAt: Date = Date(),
         capabilities: [AgentCapability]
     ) {
@@ -45,6 +48,7 @@ public struct AgentIntegrationStatus: Identifiable, Sendable, Equatable {
         self.state = state
         self.paths = paths
         self.detail = detail
+        self.detailMessage = detailMessage
         self.scannedAt = scannedAt
         self.capabilities = capabilities
     }
@@ -88,10 +92,15 @@ public final class AgentorStore {
     public private(set) var isEnabled = true
     public private(set) var isScanning = false
     public private(set) var operatingAgent: AgentKind?
-    public private(set) var integrationError: String?
-    public private(set) var focusMessage: String?
+    private var integrationFailure: LocalizedMessage?
+    public var integrationError: String? { integrationFailure?.resolve() }
+    private var focusFailed = false
+    public var focusMessage: String? { focusFailed ? L10n.text("无法定位原窗口，请手动切回 Agent。") : nil }
+    public private(set) var retainedDrafts: [AgentorPendingRequest] = []
+    public private(set) var discardedDraftCount = 0
     public private(set) var hasScanned = false
 
+    @ObservationIgnored private var activityTokens: [AgentorSessionKey: String] = [:]
     private let dependencies: AgentorFeatureDependencies
     @ObservationIgnored private var responders: [String: @MainActor @Sendable (AgentorResponse) -> Void] = [:]
     @ObservationIgnored private var timeoutTasks: [String: Task<Void, Never>] = [:]
@@ -119,6 +128,8 @@ public final class AgentorStore {
         guard isEnabled != enabled else { return }
         isEnabled = enabled
         guard !enabled else { return }
+        activityTokens.values.forEach(dependencies.revokePrompt)
+        activityTokens.removeAll()
         let requestIDs = reducer.reset()
         for requestID in requestIDs {
             responders.removeValue(forKey: requestID)?(.fallback(.featureDisabled))
@@ -127,12 +138,16 @@ public final class AgentorStore {
         }
         noticeTasks.values.forEach { $0.cancel() }
         noticeTasks.removeAll()
-        focusMessage = nil
+        focusFailed = false
+        retainedDrafts.removeAll()
+        discardedDraftCount = 0
     }
 
     public func receive(_ event: AgentorEvent) {
         guard isEnabled else { return }
+        let previous = reducer.pendingRequests
         apply(reducer.apply(event))
+        if event.name != .writebackSucceeded { retainRemovedDrafts(from: previous) }
     }
 
     public func receive(
@@ -200,12 +215,15 @@ public final class AgentorStore {
             guard let self else { return }
             let focused = await dependencies.focusOrigin(resolvedKey(for: pending.request))
             await MainActor.run {
-                self.focusMessage = focused ? nil : "无法定位原窗口，请手动切回 Agent。"
+                self.focusFailed = !focused
             }
         }
     }
 
     public func removeSession(_ key: AgentorSessionKey) {
+        if let token = activityTokens.removeValue(forKey: key) { dependencies.revokePrompt(token) }
+        let previous = reducer.pendingRequests
+        defer { retainRemovedDrafts(from: previous) }
         let requestIDs = reducer.removeSession(key)
         for requestID in requestIDs {
             responders.removeValue(forKey: requestID)?(.fallback(.upstreamHandled))
@@ -215,7 +233,12 @@ public final class AgentorStore {
     }
 
     public func removeStaleSessions(now: Date = Date()) {
+        let previous = reducer.pendingRequests
+        defer { retainRemovedDrafts(from: previous) }
         let requestIDs = reducer.removeStale(before: now.addingTimeInterval(-20 * 60))
+        for key in Array(activityTokens.keys) where reducer.sessions[key] == nil {
+            if let token = activityTokens.removeValue(forKey: key) { dependencies.revokePrompt(token) }
+        }
         for requestID in requestIDs {
             responders.removeValue(forKey: requestID)?(.fallback(.timedOut))
             timeoutTasks.removeValue(forKey: requestID)?.cancel()
@@ -231,7 +254,7 @@ public final class AgentorStore {
     public func refreshIntegrations() async {
         guard !isScanning, operatingAgent == nil else { return }
         isScanning = true
-        integrationError = nil
+        integrationFailure = nil
         let statuses = await dependencies.scanIntegrations()
         integrationStatuses = AgentKind.allCases.compactMap { agent in statuses.first { $0.agent == agent } }
         hasScanned = true
@@ -241,14 +264,16 @@ public final class AgentorStore {
     public func perform(_ action: AgentIntegrationAction, for agent: AgentKind) async {
         guard operatingAgent == nil, !isScanning else { return }
         operatingAgent = agent
-        integrationError = nil
+        integrationFailure = nil
         do {
             try await dependencies.performIntegration(agent, action)
         } catch {
-            integrationError = error.localizedDescription
+            integrationFailure = (error as? AgentorIntegrationFailure)?.message ?? L10n.message("无法连接 Agent：%1$@", error.localizedDescription)
         }
         operatingAgent = nil
+        let failure = integrationFailure
         await refreshIntegrations()
+        integrationFailure = failure
     }
 
     public func setEditingText(_ editing: Bool) {
@@ -260,18 +285,20 @@ public final class AgentorStore {
             switch effect {
             case let .started(key, eventID):
                 guard let session = reducer.sessions[key] else { continue }
+                if let previous = activityTokens.updateValue("agentor:event:\(eventID)", forKey: key) { dependencies.revokePrompt(previous) }
                 publish(eventID: eventID, icon: "sparkles", summary: "\(key.agent.displayName) · \(session.label)", style: .activity)
             case let .ended(key, outcome, _, eventID):
+                if let token = activityTokens.removeValue(forKey: key) { dependencies.revokePrompt(token) }
                 let style: FunctionCardPromptStyle = outcome == .normal ? .success : .failure
                 let icon = outcome == .normal ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                let prefix = outcome == .normal ? "已完成" : (outcome == .cancel ? "已取消" : "执行失败")
-                publish(eventID: eventID, icon: icon, summary: "\(prefix) · \(key.agent.displayName)", style: style)
+                let message = L10n.message(outcome == .normal ? "已完成 · %1$@" : (outcome == .cancel ? "已取消 · %1$@" : "执行失败 · %1$@"), key.agent.displayName)
+                publish(eventID: eventID, icon: icon, summary: message.resolve(), message: message, style: style)
             case let .requestOpened(key, requestID):
                 guard let session = reducer.sessions[key] else { continue }
                 dependencies.publishPrompt(FunctionCardPrompt(
                     token: questionPromptToken(requestID), sourceID: .agentor,
                     systemImage: "questionmark.circle.fill", moduleName: "Agentor",
-                    summary: "等待回答 · \(key.agent.displayName) · \(session.label)", style: .attention
+                    summary: session.label, message: L10n.message("等待回答 · %1$@ · %2$@", key.agent.displayName, session.label), style: .attention
                 ))
             case let .requestResolved(key, requestID, upstream):
                 responders.removeValue(forKey: requestID)?(.fallback(.upstreamHandled))
@@ -279,7 +306,7 @@ public final class AgentorStore {
                 dependencies.revokePrompt(questionPromptToken(requestID))
                 if upstream { scheduleNoticeClear(for: key) }
             case let .writebackFailed(key, requestID):
-                publish(eventID: "writeback:\(requestID)", icon: "exclamationmark.triangle.fill", summary: "回答写回失败 · \(key.agent.displayName)", style: .failure)
+                publish(eventID: "writeback:\(requestID)", icon: "exclamationmark.triangle.fill", summary: key.agent.displayName, message: L10n.message("回答写回失败 · %1$@", key.agent.displayName), style: .failure)
             case .droppedCapacity:
                 break
             }
@@ -288,6 +315,8 @@ public final class AgentorStore {
 
     private func fallBack(requestID: String, reason: AgentorFallbackReason, publishFailure: Bool) {
         guard reducer.pendingRequests[requestID] != nil else { return }
+        let previous = reducer.pendingRequests
+        defer { retainRemovedDrafts(from: previous) }
         responders.removeValue(forKey: requestID)?(.fallback(reason))
         timeoutTasks.removeValue(forKey: requestID)?.cancel()
         let pending = reducer.pendingRequests[requestID]
@@ -295,20 +324,37 @@ public final class AgentorStore {
         if publishFailure, let pending {
             publish(
                 eventID: "fallback:\(requestID)", icon: "exclamationmark.triangle.fill",
-                summary: "回答超时 · \(pending.request.session.agent.displayName)", style: .failure
+                summary: pending.request.session.agent.displayName, message: L10n.message("回答超时 · %1$@", pending.request.session.agent.displayName), style: .failure
             )
         }
     }
 
-    private func publish(eventID: String, icon: String, summary: String, style: FunctionCardPromptStyle) {
+    private func publish(eventID: String, icon: String, summary: String, message: LocalizedMessage? = nil, style: FunctionCardPromptStyle) {
         dependencies.publishPrompt(FunctionCardPrompt(
             token: "agentor:event:\(eventID)", sourceID: .agentor,
-            systemImage: icon, moduleName: "Agentor", summary: summary, style: style
+            systemImage: icon, moduleName: "Agentor", summary: summary, message: message, style: style
         ))
     }
 
     private func questionPromptToken(_ requestID: String) -> String {
         "agentor:question:\(requestID)"
+    }
+
+    public func discardRetainedDraft(_ requestID: String) {
+        retainedDrafts.removeAll { $0.id == requestID }
+    }
+
+    private func retainRemovedDrafts(from previous: [String: AgentorPendingRequest]) {
+        for pending in previous.values.sorted(by: { $0.request.occurredAt < $1.request.occurredAt }) {
+            guard reducer.pendingRequests[pending.id] == nil,
+                  !retainedDrafts.contains(where: { $0.id == pending.id }),
+                  pending.drafts.values.contains(where: { !$0.text.isEmpty || !$0.otherText.isEmpty || !$0.selectedValues.isEmpty }) else { continue }
+            if retainedDrafts.count == AgentorContract.maximumPendingRequests {
+                retainedDrafts.removeFirst()
+                discardedDraftCount += 1
+            }
+            retainedDrafts.append(pending)
+        }
     }
 
     private func resolvedKey(for request: AgentorQuestionRequest) -> AgentorSessionKey {
@@ -325,4 +371,9 @@ public final class AgentorStore {
             self?.noticeTasks.removeValue(forKey: key)
         }
     }
+}
+
+public struct AgentorIntegrationFailure: Error, Sendable {
+    public let message: LocalizedMessage
+    public init(message: LocalizedMessage) { self.message = message }
 }

@@ -5,6 +5,7 @@ import PeekerProtocol
 import FunctionCardKit
 
 struct SettingsRootView: View {
+    @Environment(\.colorScheme) private var systemColorScheme
     let runtime: AppRuntime
     @State private var selection: SettingsDestination? = .general
 
@@ -26,12 +27,14 @@ struct SettingsRootView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationTitle("Peeker 设置")
+            .navigationTitle(L10n.text("Peeker 设置"))
         } detail: {
             settingsPage
                 .navigationTitle(title(for: resolvedSelection))
                 .frame(minWidth: 560, minHeight: 420)
         }
+        .environment(\.nativePresentationColorScheme, systemColorScheme)
+        .environment(\.locale, runtime.language.locale)
         .frame(width: 760, height: 520)
         .background {
             SettingsWindowAccessor { window in
@@ -64,11 +67,11 @@ struct SettingsRootView: View {
 
     private func title(for destination: SettingsDestination) -> String {
         switch destination {
-        case .general: "通用"
-        case .cards: "功能卡"
+        case .general: L10n.text("通用")
+        case .cards: L10n.text("功能卡")
         case let .feature(id):
-            runtime.registry.registrations.first(where: { $0.id == id })?.name ?? "功能卡"
-        case .about: "关于"
+            runtime.registry.registrations.first(where: { $0.id == id })?.name ?? L10n.text("功能卡")
+        case .about: L10n.text("关于")
         }
     }
 
@@ -135,16 +138,25 @@ private struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
-            Section("显示器") {
-                Picker("灵动岛所在屏幕", selection: screenBinding) {
+            Picker(L10n.text("Language"), selection: Binding(
+                get: { AppLanguageContext.shared.selection },
+                set: { store.setLanguage($0) }
+            )) {
+                ForEach(AppLanguage.allCases, id: \.self) { language in
+                    Text(language == .system ? L10n.text("Follow System") : language.nativeName)
+                        .tag(language)
+                }
+            }
+            Section(L10n.text("显示器")) {
+                Picker(L10n.text("灵动岛所在屏幕"), selection: screenBinding) {
                     ForEach(store.availableScreens) { screen in
-                        Text(screen.isBuiltIn ? "\(screen.name)（内建）" : screen.name)
+                        Text(screen.isBuiltIn ? L10n.text("%1$@（内建）", String(describing: screen.name)) : screen.name)
                             .tag(Optional(screen.id))
                     }
                 }
             }
-            Section("交互") {
-                LabeledContent("悬停展开延迟") {
+            Section(L10n.text("交互")) {
+                LabeledContent(L10n.text("悬停展开延迟")) {
                     HStack(spacing: 12) {
                         Slider(value: hoverExpansionDelayBinding, in: 0...2, step: 0.1)
                             .frame(width: 220)
@@ -154,18 +166,18 @@ private struct GeneralSettingsView: View {
                     }
                 }
             }
-            Section("启动") {
-                Toggle("登录时启动", isOn: launchBinding)
+            Section(L10n.text("启动")) {
+                Toggle(L10n.text("登录时启动"), isOn: launchBinding)
                 if store.launchStatus == .requiresApproval {
-                    Text("需要在“系统设置 → 通用 → 登录项”中批准 Peeker。")
+                    Text(L10n.text("需要在“系统设置 → 通用 → 登录项”中批准 Peeker。"))
                         .font(.caption).foregroundStyle(.orange)
                 }
                 if let error = store.launchError {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             }
-            Section("应用操作") {
-                Button("退出 Peeker", role: .destructive) { NSApp.terminate(nil) }
+            Section(L10n.text("应用操作")) {
+                Button(L10n.text("退出 Peeker"), role: .destructive) { NSApp.terminate(nil) }
             }
         }
         .formStyle(.grouped)
@@ -184,8 +196,8 @@ private struct GeneralSettingsView: View {
 
     private var hoverExpansionDelayDescription: String {
         store.hoverExpansionDelaySeconds == 0
-            ? "立即展开"
-            : String(format: "%.1f 秒", store.hoverExpansionDelaySeconds)
+            ? L10n.text("立即展开")
+            : String(format: L10n.text("%.1f 秒"), store.hoverExpansionDelaySeconds)
     }
 
     private var launchBinding: Binding<Bool> {
@@ -202,7 +214,7 @@ private struct CardSettingsView: View {
 
     var body: some View {
         Form {
-            Section("启用与排序") {
+            Section(L10n.text("启用与排序")) {
                 List {
                     ForEach(registry.enabledCards) { card in
                         CardSettingsRow(
@@ -240,7 +252,7 @@ private struct CardSettingsView: View {
                 try registry.setEnabled(id, enabled: enabled)
                 errorMessage = nil
             } catch {
-                errorMessage = "至少需要启用一张功能卡。"
+                errorMessage = L10n.text("至少需要启用一张功能卡。")
             }
         }
     }
@@ -259,9 +271,9 @@ private struct CardSettingsRow: View {
                 .accessibilityHidden(true)
             Text(name)
             Spacer()
-            Toggle("启用", isOn: $isEnabled)
+            Toggle(L10n.text("启用"), isOn: $isEnabled)
                 .labelsHidden()
-                .accessibilityLabel("\(name) 启用")
+                .accessibilityLabel(L10n.text("%1$@ 启用", String(describing: name)))
         }
     }
 }
@@ -272,12 +284,12 @@ private struct AboutSettingsView: View {
     var body: some View {
         Form {
             Section("Peeker") {
-                LabeledContent("版本", value: version)
+                LabeledContent(L10n.text("版本"), value: version)
                 if let startupError = store.startupError {
                     Label(startupError, systemImage: "externaldrive.badge.exclamationmark")
                         .foregroundStyle(.red)
                 }
-                Button("检查更新") { Task { await store.checkForUpdates() } }
+                Button(L10n.text("检查更新")) { Task { await store.checkForUpdates() } }
                     .disabled(store.updateState == .checking)
                 updateStatus
             }
@@ -296,18 +308,18 @@ private struct AboutSettingsView: View {
         case .idle:
             EmptyView()
         case .checking:
-            ProgressView("正在检查 GitHub Releases…")
+            ProgressView(L10n.text("正在检查 GitHub Releases…"))
         case let .current(message):
-            Label(message, systemImage: "checkmark.circle").foregroundStyle(.green)
+            Label(message.resolve(), systemImage: "checkmark.circle").foregroundStyle(.green)
         case let .available(release):
             VStack(alignment: .leading, spacing: 8) {
-                Text("发现新版本 \(release.version)").font(.headline)
+                Text(L10n.text("发现新版本 %1$@", String(describing: release.version))).font(.headline)
                 if !release.notes.isEmpty { Text(release.notes).lineLimit(5) }
                 Text("brew upgrade --cask peeker").font(.system(.body, design: .monospaced)).textSelection(.enabled)
-                Link("打开发布页面", destination: release.pageURL)
+                Link(L10n.text("打开发布页面"), destination: release.pageURL)
             }
         case let .failed(message):
-            Text(message).foregroundStyle(.red)
+            Text(message.resolve()).foregroundStyle(.red)
         }
     }
 }

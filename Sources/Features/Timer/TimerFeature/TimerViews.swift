@@ -79,7 +79,9 @@ public enum TimerFeatureFactory {
                     sourceID: .timer,
                     systemImage: "timer",
                     moduleName: "Timer",
-                    summary: "✓ \(task.name)"
+                    summary: task.name,
+                    message: L10n.message("已完成 · %1$@", task.name),
+                    style: .success
                 ))
             },
             onTemporaryNaturalCompletion: { task in
@@ -88,7 +90,9 @@ public enum TimerFeatureFactory {
                     sourceID: .timer,
                     systemImage: "timer",
                     moduleName: "Timer",
-                    summary: "✓ \(task.name)"
+                    summary: task.name,
+                    message: L10n.message("已完成 · %1$@", task.name),
+                    style: .success
                 ))
             },
             refreshTime: dependencies.refreshTime,
@@ -164,15 +168,15 @@ private struct TimerCompactTrailingView: View {
     @Bindable var store: TimerStore
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        VisualTimeline(isRunning: store.hasRunningTask) { date in
             if let task = store.runningTask {
-                Text(formatDuration(store.remainingSeconds(for: task, at: context.date)))
+                Text(formatDuration(store.remainingSeconds(for: task, at: date)))
                     .monospacedDigit()
                     .foregroundStyle(TimerIslandAppearance.secondaryText)
                     .fixedSize(horizontal: true, vertical: false)
                     .layoutPriority(2)
             } else if let task = store.runningTemporaryTask {
-                Text(formatDuration(store.remainingSeconds(for: task, at: context.date)))
+                Text(formatDuration(store.remainingSeconds(for: task, at: date)))
                     .monospacedDigit()
                     .foregroundStyle(TimerIslandAppearance.secondaryText)
                     .fixedSize(horizontal: true, vertical: false)
@@ -218,7 +222,7 @@ private struct TimerExpandedView: View {
                         }
                     }
                 } else {
-                    ContentUnavailableView("还没有计时目标", systemImage: "timer")
+                    ContentUnavailableView(L10n.text("还没有计时目标"), systemImage: "timer")
                         .foregroundStyle(TimerIslandAppearance.primaryText)
                 }
             }
@@ -232,7 +236,7 @@ private struct TimerExpandedView: View {
                         creatingTemporary = true
                         setPopoverPresented(true)
                     } label: {
-                        Label("新增临时任务", systemImage: "plus.circle.fill")
+                        Label(L10n.text("新增临时任务"), systemImage: "plus.circle.fill")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -254,7 +258,7 @@ private struct TimerExpandedView: View {
             if !presented { setPopoverPresented(false) }
         }
         .overlay(alignment: .bottomLeading) {
-            if let error = store.errorMessage {
+            if let error = store.localizedErrorMessage {
                 Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
             }
         }
@@ -269,17 +273,17 @@ private struct TimerStatisticsPanel: View {
             if store.statisticsMode == .progress {
                 if let state = store.dayState,
                    !state.visibleTasks.isEmpty || !state.activeTemporaryTasks.isEmpty {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                    VisualTimeline(isRunning: store.hasRunningTask) { date in
                         let daily = state.visibleTasks.map { task in
                             TimerProgressSnapshot(
                                 targetSeconds: task.targetSeconds,
-                                remainingSeconds: store.remainingSeconds(for: task, at: context.date)
+                                remainingSeconds: store.remainingSeconds(for: task, at: date)
                             )
                         }
                         let temporary = state.activeTemporaryTasks.map { task in
                             TimerProgressSnapshot(
                                 targetSeconds: task.targetSeconds,
-                                remainingSeconds: store.remainingSeconds(for: task, at: context.date)
+                                remainingSeconds: store.remainingSeconds(for: task, at: date)
                             )
                         }
                         if let ratio = TimerProgressMetrics.totalRatio(daily + temporary) {
@@ -287,7 +291,7 @@ private struct TimerStatisticsPanel: View {
                         }
                     }
                 } else {
-                    Text("添加目标后显示完成度")
+                    Text(L10n.text("添加目标后显示完成度"))
                         .foregroundStyle(TimerIslandAppearance.secondaryText)
                         .multilineTextAlignment(.center)
                 }
@@ -312,8 +316,8 @@ private struct TimerTemporaryTaskRow: View {
     @State private var editing = false
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remaining = store.remainingSeconds(for: task, at: context.date)
+        VisualTimeline(isRunning: task.status == .running) { date in
+            let remaining = store.remainingSeconds(for: task, at: date)
             HStack(spacing: 12) {
                 RoundedRectangle(cornerRadius: 3)
                     .fill(Color(hex: task.colorHex))
@@ -324,16 +328,12 @@ private struct TimerTemporaryTaskRow: View {
                             .font(.headline)
                             .lineLimit(1)
                             .foregroundStyle(TimerIslandAppearance.primaryText)
-                        Text(task.status == .completed ? "已完成" : formatDuration(remaining))
+                        Text(task.status == .completed ? L10n.text("已完成 · %1$@", formatDuration(task.targetSeconds)) : formatDuration(remaining))
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(
-                                task.status == .completed
-                                    ? Color.green
-                                    : TimerIslandAppearance.secondaryText
-                            )
+                            .foregroundStyle(TimerIslandAppearance.secondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    Button("编辑", systemImage: "pencil") {
+                    Button(L10n.text("编辑"), systemImage: "pencil") {
                         editing = true
                         setPopoverPresented(true)
                     }
@@ -349,19 +349,19 @@ private struct TimerTemporaryTaskRow: View {
                 .frame(width: TimerTaskRowLayout.detailsWidth)
                 TimerTaskProgressBar(
                     ratio: TimerProgressSnapshot(targetSeconds: task.targetSeconds, remainingSeconds: remaining).ratio,
-                    color: Color(hex: task.colorHex)
+                    color: task.status == .completed ? .secondary : Color(hex: task.colorHex)
                 )
                 .frame(minWidth: 80, maxWidth: .infinity)
                 .frame(height: 4)
                 if task.status == .running {
-                    Button("暂停", systemImage: "pause.fill") {
+                    Button(L10n.text("暂停"), systemImage: "pause.fill") {
                         Task { try? await store.pause() }
                     }
                     .labelStyle(.iconOnly)
                 } else if task.status == .completed {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Image(systemName: "checkmark").foregroundStyle(.secondary).frame(width: 22, height: 22)
                 } else {
-                    Button("开始", systemImage: "play.fill") {
+                    Button(L10n.text("开始"), systemImage: "play.fill") {
                         Task { try? await store.startTemporaryTask(id: task.id) }
                     }
                     .labelStyle(.iconOnly)
@@ -375,6 +375,7 @@ private struct TimerTemporaryTaskRow: View {
 }
 
 private struct TimerTemporaryEditor: View {
+    @Environment(\.nativePresentationColorScheme) private var nativeColorScheme
     let store: TimerStore
     let task: TimerTemporaryTask?
     let setEditingText: @MainActor @Sendable (Bool) -> Void
@@ -401,30 +402,29 @@ private struct TimerTemporaryEditor: View {
 
     var body: some View {
         Form {
-            TextField("名称", text: $name)
+            TextField(L10n.text("名称"), text: $name)
                 .focused($nameFocused)
                 .onChange(of: nameFocused) { _, value in setEditingText(value) }
             TimerDurationInput(duration: $duration)
             TimerPresetColorPicker(colorHex: $colorHex)
-            Toggle("随刷新消失", isOn: $expireOnRefresh)
+            Toggle(L10n.text("随刷新消失"), isOn: $expireOnRefresh)
             if let errorMessage { Text(errorMessage).font(.caption).foregroundStyle(.red) }
             HStack {
                 if let task {
-                    Button("删除", role: .destructive) {
+                    Button(L10n.text("删除"), role: .destructive) {
                         Task { do { _ = try await store.deleteTemporaryTask(id: task.id); dismiss() }
                             catch { errorMessage = error.localizedDescription } }
                     }
                 }
                 Spacer()
-                Button("取消", action: dismiss)
-                Button("保存") { Task { await save() } }
+                Button(L10n.text("取消"), action: dismiss)
+                Button(L10n.text("保存")) { Task { await save() } }
                     .buttonStyle(.borderedProminent).disabled(!isValid)
             }
         }
         .padding(16)
         .frame(width: 420)
-        .preferredColorScheme(.light)
-        .environment(\.colorScheme, .light)
+        .environment(\.colorScheme, nativeColorScheme)
         .foregroundStyle(Color.primary)
         .tint(.accentColor)
         .onDisappear { setEditingText(false) }
@@ -458,8 +458,8 @@ private struct TimerTaskRow: View {
     let task: TimerTaskInstance
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remainingSeconds = store.remainingSeconds(for: task, at: context.date)
+        VisualTimeline(isRunning: task.status == .running) { date in
+            let remainingSeconds = store.remainingSeconds(for: task, at: date)
             let progress = TimerProgressSnapshot(
                 targetSeconds: task.targetSeconds,
                 remainingSeconds: remainingSeconds
@@ -473,27 +473,23 @@ private struct TimerTaskRow: View {
                         .font(.headline)
                         .lineLimit(1)
                         .foregroundStyle(TimerIslandAppearance.primaryText)
-                    Text(task.status == .completed ? "已完成" : formatDuration(remainingSeconds))
+                    Text(task.status == .completed ? L10n.text("已完成 · %1$@", formatDuration(task.targetSeconds)) : formatDuration(remainingSeconds))
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(
-                            task.status == .completed
-                                ? Color.green
-                                : TimerIslandAppearance.secondaryText
-                        )
+                        .foregroundStyle(TimerIslandAppearance.secondaryText)
                 }
                 .frame(width: TimerTaskRowLayout.detailsWidth, alignment: .leading)
-                TimerTaskProgressBar(ratio: progress.ratio, color: Color(hex: task.colorHex))
+                TimerTaskProgressBar(ratio: progress.ratio, color: task.status == .completed ? .secondary : Color(hex: task.colorHex))
                     .frame(minWidth: 80, maxWidth: .infinity)
                     .frame(height: 4)
                 if task.status == .running {
-                    Button("暂停", systemImage: "pause.fill") {
+                    Button(L10n.text("暂停"), systemImage: "pause.fill") {
                         Task { try? await store.pause() }
                     }
                     .labelStyle(.iconOnly)
                 } else if task.status == .completed {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Image(systemName: "checkmark").foregroundStyle(.secondary).frame(width: 22, height: 22)
                 } else {
-                    Button("开始", systemImage: "play.fill") {
+                    Button(L10n.text("开始"), systemImage: "play.fill") {
                         Task { await store.start(taskID: task.id) }
                     }
                     .labelStyle(.iconOnly)
@@ -516,22 +512,22 @@ private struct TimerSettingsView: View {
 
     var body: some View {
         Form {
-            Section("业务日") {
+            Section(L10n.text("业务日")) {
                 DatePicker(
-                    "刷新时间",
+                    L10n.text("刷新时间"),
                     selection: refreshBinding,
                     displayedComponents: .hourAndMinute
                 )
-                Picker("统计显示", selection: statisticsBinding) {
-                    Text("今日完成度").tag(TimerStatisticsMode.progress)
-                    Text("当月热力日历").tag(TimerStatisticsMode.heatmap)
+                Picker(L10n.text("统计显示"), selection: statisticsBinding) {
+                    Text(L10n.text("今日完成度")).tag(TimerStatisticsMode.progress)
+                    Text(L10n.text("当月热力日历")).tag(TimerStatisticsMode.heatmap)
                 }
-                Toggle("允许临时计时任务", isOn: Binding(
+                Toggle(L10n.text("允许临时计时任务"), isOn: Binding(
                     get: { store.temporaryTasksEnabled },
                     set: { store.setTemporaryTasksEnabled($0) }
                 ))
             }
-            Section("每日计时目标") {
+            Section(L10n.text("每日计时目标")) {
                 List {
                     ForEach(store.templates) { template in
                         HStack {
@@ -561,9 +557,9 @@ private struct TimerSettingsView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     TextField(
-                        "目标名称",
+                        L10n.text("目标名称"),
                         text: $name,
-                        prompt: Text("目标名称").foregroundStyle(.secondary)
+                        prompt: Text(L10n.text("目标名称")).foregroundStyle(.secondary)
                     )
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
@@ -574,7 +570,7 @@ private struct TimerSettingsView: View {
 
                     HStack {
                         Spacer()
-                        Button("添加") {
+                        Button(L10n.text("添加")) {
                             guard let targetSeconds = duration.targetSeconds else { return }
                             let submittedName = name
                             let submittedColorHex = colorHex
@@ -602,13 +598,13 @@ private struct TimerSettingsView: View {
                 editingTemplate = nil
             }
         }
-        .confirmationDialog("删除这个计时目标？历史会话仍会保留。", isPresented: deleteConfirmation) {
-            Button("删除", role: .destructive) {
+        .confirmationDialog(L10n.text("删除这个计时目标？历史会话仍会保留。"), isPresented: deleteConfirmation) {
+            Button(L10n.text("删除"), role: .destructive) {
                 guard let id = pendingDeleteID else { return }
                 pendingDeleteID = nil
                 Task { await store.deleteTemplate(id: id) }
             }
-            Button("取消", role: .cancel) { pendingDeleteID = nil }
+            Button(L10n.text("取消"), role: .cancel) { pendingDeleteID = nil }
         }
     }
 
@@ -662,9 +658,9 @@ private struct TimerTemplateEditor: View {
     var body: some View {
         Form {
             TextField(
-                "名称",
+                L10n.text("名称"),
                 text: $name,
-                prompt: Text("名称").foregroundStyle(.secondary)
+                prompt: Text(L10n.text("名称")).foregroundStyle(.secondary)
             )
             .labelsHidden()
             .textFieldStyle(.roundedBorder)
@@ -673,8 +669,8 @@ private struct TimerTemplateEditor: View {
             TimerPresetColorPicker(colorHex: $colorHex)
             HStack {
                 Spacer()
-                Button("取消") { dismiss() }
-                Button("保存") {
+                Button(L10n.text("取消")) { dismiss() }
+                Button(L10n.text("保存")) {
                     guard let updated = updatedTemplate else { return }
                     Task { await save(updated) }
                 }
@@ -705,22 +701,22 @@ private struct TimerDurationInput: View {
     var body: some View {
         HStack(spacing: 14) {
             TimerDurationField(
-                title: "时",
-                accessibilityName: "小时",
+                title: L10n.text("时"),
+                accessibilityName: L10n.text("小时"),
                 value: $duration.hours,
                 increment: { duration.adjust(.hours, by: 1) },
                 decrement: { duration.adjust(.hours, by: -1) }
             )
             TimerDurationField(
-                title: "分",
-                accessibilityName: "分钟",
+                title: L10n.text("分"),
+                accessibilityName: L10n.text("分钟"),
                 value: $duration.minutes,
                 increment: { duration.adjust(.minutes, by: 1) },
                 decrement: { duration.adjust(.minutes, by: -1) }
             )
             TimerDurationField(
-                title: "秒",
-                accessibilityName: "秒钟",
+                title: L10n.text("秒"),
+                accessibilityName: L10n.text("秒钟"),
                 value: $duration.seconds,
                 increment: { duration.adjust(.seconds, by: 1) },
                 decrement: { duration.adjust(.seconds, by: -1) }
@@ -758,7 +754,7 @@ private struct TimerDurationField: View {
                     decrement()
                 }
                 .labelsHidden()
-                .accessibilityLabel("调整\(accessibilityName)")
+                .accessibilityLabel(L10n.text("调整%1$@", String(describing: accessibilityName)))
                 .accessibilityValue(value)
             }
         }
@@ -770,7 +766,7 @@ private struct TimerPresetColorPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("颜色")
+            Text(L10n.text("颜色"))
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -780,7 +776,7 @@ private struct TimerPresetColorPicker: View {
                         Circle()
                             .fill(Color(hex: colorHex))
                             .frame(width: 18, height: 18)
-                        Text("当前颜色")
+                        Text(L10n.text("当前颜色"))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -802,16 +798,16 @@ private struct TimerPresetColorPicker: View {
                                 )
                             if isSelected {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.system(size: 11, weight: .bold))
                                     .foregroundStyle(.white)
                             }
                         }
                         .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
-                    .help(preset.localizedName)
-                    .accessibilityLabel(preset.localizedName)
-                    .accessibilityValue(isSelected ? "已选择" : "未选择")
+                    .help(L10n.text(preset.localizedName))
+                    .accessibilityLabel(L10n.text(preset.localizedName))
+                    .accessibilityValue(isSelected ? L10n.text("已选择") : L10n.text("未选择"))
                 }
             }
         }
@@ -833,8 +829,8 @@ private struct TimerActivityCalendar: View {
         VStack(spacing: 5) {
             monthHeader
             weekdayHeader
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let currentStart = store.dayState?.businessDay.start ?? context.date
+            Group {
+                let currentStart = store.dayState?.businessDay.start ?? Date()
                 let grid = CalendarMonthGrid(
                     displaying: displayedMonth,
                     currentBusinessDayStart: currentStart,
@@ -844,11 +840,13 @@ private struct TimerActivityCalendar: View {
                     ForEach(Array(grid.weeks.enumerated()), id: \.offset) { _, week in
                         HStack(spacing: 3) {
                             ForEach(week) { day in
-                                TimerCalendarDayRing(
-                                    day: day,
-                                    state: state(for: day, at: context.date),
-                                    accessibilityText: accessibilityText(for: day, at: context.date)
-                                )
+                                VisualTimeline(isRunning: day.isCurrentBusinessDay && store.hasRunningTask) { date in
+                                    TimerCalendarDayRing(
+                                        day: day,
+                                        state: state(for: day, at: date),
+                                        accessibilityText: accessibilityText(for: day, at: date)
+                                    )
+                                }
                             }
                         }
                     }
@@ -868,7 +866,7 @@ private struct TimerActivityCalendar: View {
             }
             .buttonStyle(.plain)
             Spacer(minLength: 0)
-            Text(displayedMonth.formatted(.dateTime.year().month(.abbreviated)))
+            Text(displayedMonth.formatted(.dateTime.year().month(.abbreviated).locale(AppLanguageContext.shared.locale)))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(TimerIslandAppearance.primaryText)
             Spacer(minLength: 0)
@@ -885,7 +883,7 @@ private struct TimerActivityCalendar: View {
         return HStack(spacing: 3) {
             ForEach(Array(symbols.enumerated()), id: \.offset) { _, symbol in
                 Text(symbol)
-                    .font(.system(size: 7, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(TimerIslandAppearance.secondaryText)
                     .frame(width: 20)
             }
@@ -938,18 +936,18 @@ private struct TimerActivityCalendar: View {
     }
 
     private func accessibilityText(for day: CalendarMonthDay, at now: Date) -> String {
-        let dateText = day.date.formatted(.dateTime.month().day().locale(Locale(identifier: "zh_CN")))
+        let dateText = day.date.formatted(.dateTime.month().day().locale(AppLanguageContext.shared.locale))
         switch state(for: day, at: now) {
         case .future:
-            return "\(dateText)，未来日期"
+            return L10n.text("%1$@，未来日期", String(describing: dateText))
         case .missing:
-            return "\(dateText)，无记录"
+            return L10n.text("%1$@，无记录", String(describing: dateText))
         case .noTasks:
-            return "\(dateText)，无任务"
+            return L10n.text("%1$@，无任务", String(describing: dateText))
         case let .progress(ratio, _):
-            return "\(dateText)，完成度 \(Int((ratio * 100).rounded()))%"
+            return L10n.text("%1$@，完成度 %2$@%", String(describing: dateText), String(describing: Int((ratio * 100).rounded())))
         case .completed:
-            return "\(dateText)，完成度 100%"
+            return L10n.text("%1$@，完成度 100%", String(describing: dateText))
         }
     }
 }
@@ -968,8 +966,8 @@ private struct TimerCalendarDayRing: View {
                 centerMark
             }
             .frame(width: 18, height: 18)
-            Text(day.date.formatted(.dateTime.day()))
-                .font(.system(size: 7, weight: day.isCurrentBusinessDay ? .bold : .regular).monospacedDigit())
+            Text(day.date.formatted(.dateTime.day().locale(AppLanguageContext.shared.locale)))
+                .font(.system(size: 11, weight: day.isCurrentBusinessDay ? .bold : .regular).monospacedDigit())
                 .foregroundStyle(day.isCurrentBusinessDay ? .white : TimerIslandAppearance.secondaryText)
         }
         .frame(width: 20)
@@ -1005,7 +1003,7 @@ private struct TimerCalendarDayRing: View {
         switch state {
         case .completed:
             Image(systemName: "checkmark")
-                .font(.system(size: 7, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(.white)
         case .noTasks:
             Capsule().fill(.secondary).frame(width: 5, height: 1)
@@ -1017,6 +1015,7 @@ private struct TimerCalendarDayRing: View {
     }
 }
 
+@MainActor
 private func formatDuration(_ seconds: Int64) -> String {
     let clamped = max(0, seconds)
     let hours = clamped / 3_600
