@@ -12,6 +12,8 @@ import SwiftUI
 }
 
 struct TargetorFeedbackEffect: View {
+    static let height: CGFloat = 38
+
     let feedback: TargetorFeedback
     let reduceMotion: Bool
     @State private var settled = false
@@ -23,9 +25,12 @@ struct TargetorFeedbackEffect: View {
                 .foregroundStyle(.green)
                 .offset(y: settled || reduceMotion ? 0 : 8)
                 .opacity(settled || reduceMotion ? 1 : 0.4)
-            Text("打卡成功").font(.callout)
+            Text(L10n.text("打卡成功"))
+                .font(.callout)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
-        .frame(height: 38)
+        .frame(height: Self.height)
         .task(id: feedback.token) {
             settled = false
             withAnimation(reduceMotion ? nil : .easeOut(duration: TargetorFeedbackAnimation.duration(for: feedback.state))) {

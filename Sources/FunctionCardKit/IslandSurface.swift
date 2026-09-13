@@ -115,6 +115,8 @@ enum IslandCompactLayout {
 }
 
 enum IslandExpandedLayout {
+    static let spacing: CGFloat = 10
+    static let promptHeight: CGFloat = 40
     static let contentInsets = EdgeInsets(
         top: 16,
         leading: 28,

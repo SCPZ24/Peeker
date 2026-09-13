@@ -64,7 +64,7 @@ final class IslandStateMachineTests: XCTestCase {
     }
 
     @MainActor
-    func testPromptRequiresExplicitClickRegardlessOfHoverDelay() async {
+    func testPromptClickBypassesHoverDelay() async {
         let coordinator = makeCoordinator(hoverExpansionDelaySeconds: 2)
         coordinator.publishPrompt(FunctionCardPrompt(
             token: "prompt",

@@ -111,7 +111,7 @@ public final class IslandPanelController {
             _ = coordinator.surfaceDescription
             _ = coordinator.registry.selectedID
             _ = coordinator.registry.enabledIDs
-            _ = coordinator.registry.selectedCard?.layoutState.currentExpandedSize
+            _ = coordinator.requestedExpandedSize
         } onChange: { [weak self] in
             Task { @MainActor in
                 self?.updateFrame(animated: true)
@@ -121,7 +121,8 @@ public final class IslandPanelController {
     }
 
     private func updateFrame(animated: Bool) {
-        guard let selected = coordinator.registry.selectedCard else { return }
+        guard let selected = coordinator.registry.selectedCard,
+              let expandedSize = coordinator.requestedExpandedSize else { return }
         let surface = coordinator.surfaceDescription
         let requestedScreen = screens.screen(withStableID: targetScreenID)
         let screen = requestedScreen ?? NSScreen.main ?? NSScreen.screens.first
@@ -160,7 +161,7 @@ public final class IslandPanelController {
             auxiliaryTopRightWidth: auxiliaryTopRightWidth
         )
         let expandedFrame = IslandPanelGeometry.frame(
-            requestedSize: selected.layoutState.currentExpandedSize,
+            requestedSize: expandedSize,
             screenFrame: screen.frame,
             safeTopInset: screen.safeAreaInsets.top,
             auxiliaryTopLeftWidth: auxiliaryTopLeftWidth,

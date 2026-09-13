@@ -23,38 +23,43 @@ public struct IslandRootView: View {
         let isResting = surfaceIsResting(surface)
 
         ZStack(alignment: .top) {
-            ZStack {
-                expandedContent
-                    .environment(\.isVisualActivityEnabled, coordinator.isExpanded && coordinator.isVisualActivityEnabled)
-                    .opacity(IslandContentTransition.expandedOpacity(
-                        expansion: displayContext.expansionTarget,
-                        isResting: isResting
-                    ))
-                    .allowsHitTesting(interactivity.expandedAllowsHitTesting)
-                    .accessibilityHidden(!interactivity.expandedAllowsHitTesting)
-
-                collapsedContent(surface)
-                    .environment(\.isVisualActivityEnabled, !coordinator.isExpanded && coordinator.isVisualActivityEnabled)
-                    .opacity(1 - displayContext.expansionTarget)
-                    .allowsHitTesting(interactivity.compactAllowsHitTesting)
-                    .accessibilityHidden(!interactivity.compactAllowsHitTesting)
-            }
-            .frame(width: surfaceSize.width, height: surfaceSize.height)
-            .onGeometryChange(for: CGSize.self) { $0.size } action: {
-                displayContext.updatePresentationSurfaceSize($0)
-            }
-            .background(displayContext.drawsBlackSurface ? Color.black : Color.clear)
-            .clipShape(surfaceShape)
-            .environment(\.nativePresentationColorScheme, systemColorScheme)
-            .environment(\.colorScheme, .dark)
-            .foregroundStyle(.primary)
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering { coordinator.pointerEntered() }
-                else { coordinator.pointerExited() }
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Peeker")
+            Color.clear
+                .frame(width: surfaceSize.width, height: surfaceSize.height)
+                // Hidden expanded content must not determine the collapsed layer's layout proposal.
+                .overlay {
+                    expandedContent
+                        .frame(width: displayContext.expandedSurfaceSize.width, height: displayContext.expandedSurfaceSize.height)
+                        .environment(\.isVisualActivityEnabled, coordinator.isExpanded && coordinator.isVisualActivityEnabled)
+                        .opacity(IslandContentTransition.expandedOpacity(
+                            expansion: displayContext.expansionTarget,
+                            isResting: isResting
+                        ))
+                        .allowsHitTesting(interactivity.expandedAllowsHitTesting)
+                        .accessibilityHidden(!interactivity.expandedAllowsHitTesting)
+                }
+                .overlay {
+                    collapsedContent(surface)
+                        .frame(width: displayContext.compactSurfaceSize.width, height: displayContext.compactSurfaceSize.height)
+                        .environment(\.isVisualActivityEnabled, !coordinator.isExpanded && coordinator.isVisualActivityEnabled)
+                        .opacity(1 - displayContext.expansionTarget)
+                        .allowsHitTesting(interactivity.compactAllowsHitTesting)
+                        .accessibilityHidden(!interactivity.compactAllowsHitTesting)
+                }
+                .onGeometryChange(for: CGSize.self) { $0.size } action: {
+                    displayContext.updatePresentationSurfaceSize($0)
+                }
+                .background(displayContext.drawsBlackSurface ? Color.black : Color.clear)
+                .clipShape(surfaceShape)
+                .environment(\.nativePresentationColorScheme, systemColorScheme)
+                .environment(\.colorScheme, .dark)
+                .foregroundStyle(.primary)
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if hovering { coordinator.pointerEntered() }
+                    else { coordinator.pointerExited() }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Peeker")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -129,7 +134,7 @@ public struct IslandRootView: View {
     }
 
     private var expandedContent: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: IslandExpandedLayout.spacing) {
             HStack(spacing: 8) {
                 ForEach(coordinator.registry.enabledCards) { card in
                     Button { coordinator.select(card.id) } label: {
@@ -158,17 +163,13 @@ public struct IslandRootView: View {
                 .accessibilityLabel(L10n.text("打开设置"))
             }
 
-            Group {
-                if coordinator.isExpanded, let prompt = coordinator.promptCenter.current {
-                    promptContent(prompt)
-                } else {
-                    Color.clear
-                }
-            }
-            .frame(height: 40)
-
             coordinator.registry.selectedCard?.makeExpandedView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if coordinator.isExpanded, let prompt = coordinator.promptCenter.current {
+                promptContent(prompt)
+                    .frame(height: IslandExpandedLayout.promptHeight)
+            }
         }
         .padding(IslandExpandedLayout.contentInsets)
         .background {

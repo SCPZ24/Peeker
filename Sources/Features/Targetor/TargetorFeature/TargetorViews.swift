@@ -133,7 +133,6 @@ private struct TargetorExpandedView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var expansionNonce = UUID()
     @Environment(\.isVisualActivityEnabled) private var isVisible
-    @State private var selectedTargetID: UUID?
     @State private var calendarCache: [UUID: TargetorTargetCalendarSnapshot] = [:]
     @State private var hoveredTargetID: UUID?
     @State private var activeDragEnvelope: TargetorDragEnvelope?
@@ -161,7 +160,7 @@ private struct TargetorExpandedView: View {
 
                 VStack(spacing: 8) {
                     Button(L10n.text("返回总览")) {
-                        selectedTargetID = nil; hoveredTargetID = nil
+                        hoveredTargetID = nil
                     }
                     .buttonStyle(.borderless)
                     TargetorSidePanel(
@@ -227,7 +226,6 @@ private struct TargetorExpandedView: View {
             for target in next where previous[target.id] != target { calendarCache[target.id] = nil }
             let ids = Set(next.map(\.id))
             calendarCache = calendarCache.filter { ids.contains($0.key) }
-            if let selectedTargetID, !ids.contains(selectedTargetID) { self.selectedTargetID = nil }
             if let hoveredTargetID, !ids.contains(hoveredTargetID) { self.hoveredTargetID = nil }
             calendarRevision += 1
         }
@@ -247,7 +245,7 @@ private struct TargetorExpandedView: View {
         } else {
             ScrollView {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 180), spacing: 10)],
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
                     spacing: 10
                 ) {
                     ForEach(store.targets) { state in
@@ -260,21 +258,20 @@ private struct TargetorExpandedView: View {
                             beginDragging: beginDragging,
                             finishDragging: finishDragging
                         )
-                        .focusable()
-                        .onKeyPress(.return) { selectedTargetID = state.id; return .handled }
-                        .onTapGesture { selectedTargetID = state.id }
+                        .onTapGesture {
+                            // Consume card clicks without selecting a target or toggling the island background pin.
+                        }
                         .contextMenu {
-                            Button(L10n.text("查看日历")) { selectedTargetID = state.id }
                             if let period = state.currentPeriod, period.state != .completed {
                                 Button(L10n.text("打卡")) {
                                     _ = performDrop(TargetorDragEnvelope(expansionNonce: expansionNonce, targetID: state.id, periodID: period.id))
                                 }
                             }
                         }
-                        .accessibilityAction(named: L10n.text("查看日历")) { selectedTargetID = state.id }
+                        .accessibilityAction(named: L10n.text("查看日历")) { hoveredTargetID = state.id }
                         .onHover { hovering in
                             withAnimation(hoverAnimation) {
-                                if hovering && selectedTargetID == nil {
+                                if hovering {
                                     if hoveredTargetID != state.id {
                                         targetCalendar = nil
                                         calendarErrorMessage = nil
@@ -294,12 +291,12 @@ private struct TargetorExpandedView: View {
         TargetorSidePanelMode.resolve(
             feedback: store.feedback,
             activeEnvelope: dragLayoutModel.targetedEnvelope ?? activeDragEnvelope,
-            hoveredTargetID: selectedTargetID ?? hoveredTargetID
+            hoveredTargetID: hoveredTargetID
         )
     }
 
     private var calendarRequest: TargetorCalendarRequest? {
-        (store.feedback?.targetID ?? selectedTargetID ?? hoveredTargetID).map {
+        (store.feedback?.targetID ?? hoveredTargetID).map {
             TargetorCalendarRequest(
                 targetID: $0,
                 revision: calendarRevision
@@ -471,7 +468,7 @@ private struct TargetorCard: View {
         let checkinState = period?.state ?? .notStarted
         ZStack {
             VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     FunctionCardIconView(
                         descriptor: .bundleSVG(
                             featureID: .targetor,
@@ -480,34 +477,37 @@ private struct TargetorCard: View {
                         manifest: manifest,
                         accessibilityLabel: state.target.iconName
                     )
-                    .frame(width: 58, height: 58)
-                    .frame(width: 68)
+                    .frame(width: 30, height: 30)
 
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(state.target.title)
-                            .font(.headline)
-                            .lineLimit(1)
-                        Text(L10n.text("本周期 %1$@/%2$@", String(describing: period?.count ?? 0), String(describing: period?.maxCountSnapshot ?? state.target.maxCount)))
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                if let description = state.target.description {
-                    Text(description)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    Text(state.target.title)
+                        .font(.system(size: 13, weight: .semibold))
                         .lineLimit(2)
-                        .accessibilityLabel(description)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(period?.count ?? 0)/\(period?.maxCountSnapshot ?? state.target.maxCount)")
+                        .font(.system(size: 14, weight: .regular).monospacedDigit())
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .accessibilityLabel(L10n.text("本周期 %1$@/%2$@", String(describing: period?.count ?? 0), String(describing: period?.maxCountSnapshot ?? state.target.maxCount)))
+
+                    if let description = state.target.description {
+                        Text(description)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityLabel(description)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 Spacer(minLength: 2)
                 ProgressView(value: period?.ratio ?? 0)
                     .tint(.white)
             }
-            .padding(11)
+            .padding(9)
             .background(Color.white.opacity(hovered ? 0.09 : 0.05), in: RoundedRectangle(cornerRadius: 14))
             .overlay {
                 RoundedRectangle(cornerRadius: 14)
@@ -564,10 +564,7 @@ private struct TargetorSidePanel: View {
     private var panelContent: some View {
         switch mode {
         case let .feedback(feedback):
-            VStack(spacing: 8) {
-                TargetorFeedbackEffect(feedback: feedback, reduceMotion: reduceMotion)
-                targetCalendarView(targetID: feedback.targetID)
-            }
+            targetCalendarView(targetID: feedback.targetID, feedback: feedback)
         case let .dragging(targetID):
             if let target = targets.first(where: { $0.id == targetID }) {
                 checkinView(target)
@@ -601,7 +598,7 @@ private struct TargetorSidePanel: View {
     }
 
     @ViewBuilder
-    private func targetCalendarView(targetID: UUID) -> some View {
+    private func targetCalendarView(targetID: UUID, feedback: TargetorFeedback? = nil) -> some View {
         if let calendarErrorMessage {
             VStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle")
@@ -612,13 +609,24 @@ private struct TargetorSidePanel: View {
                   let targetCalendar,
                   targetCalendar.targetID == targetID {
             VStack(spacing: 5) {
-                Text(target.target.title)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(calendarTitle(targetCalendar))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                VStack(spacing: 5) {
+                    Text(target.target.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                    Text(calendarTitle(targetCalendar))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, minHeight: TargetorFeedbackEffect.height)
+                .opacity(feedback == nil ? 1 : 0)
+                .accessibilityHidden(feedback != nil)
+                .overlay {
+                    if let feedback {
+                        TargetorFeedbackEffect(feedback: feedback, reduceMotion: reduceMotion)
+                            .allowsHitTesting(false)
+                    }
+                }
                 switch targetCalendar.granularity {
                 case .month:
                     monthGrid(snapshot: targetCalendar)
@@ -713,7 +721,7 @@ private struct TargetorSidePanel: View {
             .frame(width: size, height: size)
             .overlay {
                 if size >= 28 {
-                    Text(cell.date.formatted(.dateTime.day().locale(AppLanguageContext.shared.locale))).font(.system(size: 11)).foregroundStyle(.primary)
+                    Text(String(Calendar.current.component(.day, from: cell.date))).font(.system(size: 11)).foregroundStyle(.primary)
                 }
             }
             .help(cellDescription(cell))

@@ -110,6 +110,114 @@ final class PromptCenterTests: XCTestCase {
         XCTAssertNil(coordinator.promptCenter.current)
     }
 
+    func testExpandedNotificationAddsFooterHeightOnlyWhilePresent() async {
+        let coordinator = IslandCoordinator(registry: CardRegistry(registrations: [registrationWithoutCompact(timer)]))
+        let originalSize = CGSize(width: 500, height: 300)
+        coordinator.pointerEntered()
+        XCTAssertEqual(coordinator.requestedExpandedSize, originalSize)
+
+        coordinator.publishPrompt(prompt(1, source: timer))
+        await Task.yield()
+        XCTAssertNotNil(coordinator.promptCenter.current)
+        XCTAssertEqual(coordinator.requestedExpandedSize, CGSize(width: 500, height: 350))
+        XCTAssertEqual(coordinator.registry.selectedCard?.layoutState.currentExpandedSize, originalSize)
+
+        coordinator.registry.selectedCard?.layoutState.currentExpandedSize = CGSize(width: 600, height: 400)
+        XCTAssertEqual(coordinator.requestedExpandedSize, CGSize(width: 600, height: 450))
+        _ = coordinator.promptCenter.consumeCurrent()
+        XCTAssertEqual(coordinator.requestedExpandedSize, CGSize(width: 600, height: 400))
+    }
+
+    func testCollapsedNotificationDoesNotReserveExpandedFooterHeight() async {
+        let coordinator = IslandCoordinator(registry: CardRegistry(registrations: [registrationWithoutCompact(timer)]))
+        coordinator.publishPrompt(prompt(1, source: timer))
+        await Task.yield()
+        XCTAssertNotNil(coordinator.promptCenter.current)
+        XCTAssertFalse(coordinator.isExpanded)
+        XCTAssertEqual(coordinator.requestedExpandedSize, CGSize(width: 500, height: 300))
+    }
+
+    func testPromptHoverImmediatelyOpensNormalCompactCardAndPreservesNotification() async {
+        let coordinator = IslandCoordinator(registry: CardRegistry(registrations: [
+            registration(timer, order: 0, eligible: { true }),
+            registrationWithoutCompact(pusher),
+        ]))
+        coordinator.publishPrompt(prompt(1, source: pusher))
+        coordinator.publishPrompt(prompt(2, source: pusher))
+        await Task.yield()
+        let displayedAt = Date()
+        coordinator.promptCenter.markDisplayed(token: "1", at: displayedAt)
+
+        coordinator.pointerEntered()
+
+        XCTAssertEqual(coordinator.surfaceDescription, .expanded(featureID: timer))
+        XCTAssertEqual(coordinator.registry.selectedID, timer)
+        XCTAssertEqual(coordinator.promptCenter.current?.token, "1")
+        XCTAssertEqual(coordinator.promptCenter.displayedAt, displayedAt)
+        XCTAssertEqual(coordinator.promptCenter.pending.map(\.token), ["2"])
+        XCTAssertEqual(coordinator.requestedExpandedSize, CGSize(width: 500, height: 350))
+
+        coordinator.openCurrentPrompt()
+        XCTAssertEqual(coordinator.surfaceDescription, .expanded(featureID: pusher))
+        XCTAssertNil(coordinator.promptCenter.current)
+        await Task.yield()
+        XCTAssertEqual(coordinator.promptCenter.current?.token, "2")
+    }
+
+    func testPromptHoverUsesSelectedCardWhenNoCompactIsAvailable() async {
+        let coordinator = IslandCoordinator(registry: CardRegistry(registrations: [
+            registrationWithoutCompact(timer), registrationWithoutCompact(pusher),
+        ]))
+        coordinator.publishPrompt(prompt(1, source: pusher))
+        await Task.yield()
+        coordinator.promptCenter.markDisplayed(token: "1")
+        coordinator.pointerEntered()
+
+        XCTAssertEqual(coordinator.surfaceDescription, .expanded(featureID: timer))
+        XCTAssertEqual(coordinator.promptCenter.current?.token, "1")
+        coordinator.escape(pointerIsInside: false)
+        XCTAssertEqual(coordinator.surfaceDescription, .resting(featureID: timer))
+        XCTAssertNil(coordinator.promptCenter.current)
+    }
+
+    func testPromptHoverHonorsDelayAndPointerExitCancelsExpansion() async throws {
+        let coordinator = IslandCoordinator(
+            registry: CardRegistry(registrations: [registrationWithoutCompact(timer)]),
+            hoverExpansionDelaySeconds: 0.1
+        )
+        coordinator.publishPrompt(prompt(1, source: timer))
+        await Task.yield()
+        coordinator.pointerEntered()
+        XCTAssertFalse(coordinator.isExpanded)
+        coordinator.pointerExited()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertFalse(coordinator.isExpanded)
+        XCTAssertEqual(coordinator.promptCenter.current?.token, "1")
+
+        coordinator.pointerEntered()
+        XCTAssertFalse(coordinator.isExpanded)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(coordinator.surfaceDescription, .expanded(featureID: timer))
+        XCTAssertEqual(coordinator.promptCenter.current?.token, "1")
+    }
+
+    func testPromptArrivingDuringHoverDelayDoesNotRedirectOrConsumeNotification() async throws {
+        let coordinator = IslandCoordinator(
+            registry: CardRegistry(registrations: [
+                registrationWithoutCompact(timer), registrationWithoutCompact(pusher),
+            ]),
+            hoverExpansionDelaySeconds: 0.1
+        )
+        coordinator.pointerEntered()
+        coordinator.publishPrompt(prompt(1, source: pusher))
+        await Task.yield()
+        XCTAssertEqual(coordinator.presentation.base, .prompt)
+        try await Task.sleep(for: .milliseconds(150))
+
+        XCTAssertEqual(coordinator.surfaceDescription, .expanded(featureID: timer))
+        XCTAssertEqual(coordinator.promptCenter.current?.token, "1")
+    }
+
     private func prompt(_ index: Int, source: FeatureID) -> FunctionCardPrompt {
         FunctionCardPrompt(
             token: String(index),

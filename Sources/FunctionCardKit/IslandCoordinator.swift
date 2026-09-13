@@ -48,6 +48,14 @@ public final class IslandCoordinator {
         }
     }
 
+    public var requestedExpandedSize: CGSize? {
+        guard var size = registry.selectedCard?.layoutState.currentExpandedSize else { return nil }
+        if isExpanded, promptCenter.current != nil {
+            size.height += IslandExpandedLayout.spacing + IslandExpandedLayout.promptHeight
+        }
+        return size
+    }
+
     public var surfaceDescription: IslandSurfaceDescription {
         switch presentation.base {
         case let .hoverExpanded(featureID), let .pinnedExpanded(featureID):
@@ -65,11 +73,9 @@ public final class IslandCoordinator {
         pendingExpansionTask?.cancel()
 
         switch surfaceDescription {
-        case .prompt:
-            promptCenter.setPlaybackAllowed(false)
         case .expanded:
             break
-        case .compact, .resting:
+        case .compact, .resting, .prompt:
             guard hoverExpansionDelaySeconds > 0 else {
                 expandCurrentSurface()
                 return
@@ -194,15 +200,13 @@ public final class IslandCoordinator {
     private func expandCurrentSurface() {
         let featureID: FeatureID
         switch surfaceDescription {
-        case let .prompt(prompt):
-            promptCenter.setPlaybackAllowed(false)
-            _ = promptCenter.consumeCurrent()
-            featureID = prompt.sourceID
+        case .prompt:
+            // Hover opens the underlying island; only an explicit prompt click navigates to its source.
+            featureID = registry.compactCard?.id ?? registry.selectedID
         case let .compact(id), let .resting(id), let .expanded(id):
             featureID = id
         }
         registry.select(featureID)
-        promptCenter.setPlaybackAllowed(true)
         mutatePresentation { $0.pointerEntered(featureID: featureID) }
     }
 

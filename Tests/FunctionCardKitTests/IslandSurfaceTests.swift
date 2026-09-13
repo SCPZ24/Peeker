@@ -1,9 +1,70 @@
+import AppKit
+import SwiftUI
+import PeekerCore
 import CoreGraphics
 import XCTest
 @testable import FunctionCardKit
 
 @MainActor
 final class IslandSurfaceTests: XCTestCase {
+    func testCollapsedWingsStayInsideSurfaceWithWideHiddenExpandedContent() async throws {
+        var leadingFrame = CGRect.zero
+        var trailingFrame = CGRect.zero
+        let compactSize = CGSize(width: 340, height: 38)
+        let expandedSize = CGSize(width: 960, height: 480)
+        let registration = FunctionCardRegistration(
+            id: FeatureID(rawValue: "layout-test"), name: "Layout", systemImage: "circle", defaultOrder: 0,
+            metrics: FunctionCardMetrics(
+                compactWidth: compactSize.width, compactHeight: compactSize.height,
+                compactLeadingWidth: 100, compactTrailingWidth: 100,
+                expandedWidth: expandedSize.width, expandedHeight: expandedSize.height
+            ),
+            makeCompactLeadingView: {
+                AnyView(Color.white.frame(width: 32, height: 16)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { leadingFrame = $0 })
+            },
+            makeCompactTrailingView: {
+                AnyView(Color.white.frame(width: 32, height: 16)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { trailingFrame = $0 })
+            },
+            makeExpandedView: { AnyView(Color.clear.frame(minWidth: 900, minHeight: 300)) },
+            makeSettingsView: { AnyView(EmptyView()) }
+        )
+        let coordinator = IslandCoordinator(registry: CardRegistry(registrations: [registration]))
+        let context = IslandDisplayContext(
+            compactSurfaceSize: compactSize, expandedSurfaceSize: expandedSize, drawsBlackSurface: true
+        )
+        let host = NSHostingView(rootView: IslandRootView(
+            coordinator: coordinator, displayContext: context, openSettings: {}
+        ))
+        host.sizingOptions = []
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: expandedSize), styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        defer { window.contentView = nil }
+
+        for _ in 0..<3 {
+            window.setContentSize(expandedSize)
+            coordinator.pointerEntered()
+            context.setExpansionTarget(1)
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+            coordinator.escape(pointerIsInside: false)
+            context.setExpansionTarget(0)
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+            window.setContentSize(compactSize)
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+
+            XCTAssertEqual(context.presentationSurfaceSize, compactSize)
+            XCTAssertEqual(leadingFrame.width, 32)
+            XCTAssertEqual(trailingFrame.width, 32)
+            XCTAssertGreaterThanOrEqual(leadingFrame.minX, 10)
+            XCTAssertLessThanOrEqual(trailingFrame.maxX, compactSize.width - 10)
+        }
+    }
+
     func testPausedVisualScheduleHasNoRecurringTicks() {
         let start = Date(timeIntervalSince1970: 10)
         let paused = VisualTimelineSchedule(interval: 1, paused: true)
